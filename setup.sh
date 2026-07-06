@@ -66,30 +66,30 @@ ask() {
 # toggles, Enter confirms). Caller sets CHECK_ITEMS (labels) and CHECK_STATE
 # (0/1 defaults), same length. Updates CHECK_STATE in place.
 #
-# Robust against being drawn at the bottom of the screen: we first RESERVE n
-# blank lines (which scrolls the viewport up once if needed), then move back to
-# the top of that block. From then on every redraw stays inside the reserved
-# block and never emits a newline past the last item, so no further scrolling
-# can desync the relative cursor-up math.
+# Uses the alternate screen buffer (the same mechanism vim/fzf use): we clear
+# and redraw from the home position every frame, so there is no relative cursor
+# math and scrolling can never desync the display. Every /dev/tty read is guarded
+# (|| ...) so a stray non-zero status can't trip `set -e`, and an INT trap leaves
+# the alt screen before aborting so Ctrl-C never strands the terminal.
 choose_checkbox() {
   local prompt="$1" n=${#CHECK_ITEMS[@]} cur=0 key rest i mark pointer
-  printf '%s\n' "$prompt" >/dev/tty
-  printf '  (↑/↓ 이동, space 토글, Enter 확정)\n' >/dev/tty
-  for i in $(seq 1 "$n"); do printf '\n' >/dev/tty; done   # reserve n lines
-  printf '\033[%dA' "$n" >/dev/tty                          # back to first line
+  printf '\033[?1049h' >/dev/tty                     # enter alternate screen
+  trap 'printf "\033[?1049l" >/dev/tty; exit 130' INT
   while true; do
+    printf '\033[H\033[2J' >/dev/tty                 # home + clear
+    printf '%s\n' "$prompt" >/dev/tty
+    printf '  (↑/↓ 이동, space 토글, Enter 확정)\n\n' >/dev/tty
     for i in $(seq 0 $((n - 1))); do
       mark=' '; [ "${CHECK_STATE[$i]}" = "1" ] && mark='x'
       pointer='  '; [ "$i" = "$cur" ] && pointer='> '
-      printf '\r\033[K%s[%s] %s' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
-      [ "$i" -lt "$((n - 1))" ] && printf '\n' >/dev/tty     # newline between, not after last
+      printf '  %s[%s] %s\n' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
     done
-    IFS= read -rsn1 key </dev/tty
+    IFS= read -rsn1 key </dev/tty || key=''
     case "$key" in
       '') break ;;
       ' ') CHECK_STATE[cur]=$([ "${CHECK_STATE[cur]}" = "1" ] && echo 0 || echo 1) ;;
       $'\033')
-        IFS= read -rsn2 -t 0.1 rest </dev/tty || true
+        IFS= read -rsn2 -t 0.1 rest </dev/tty || rest=''
         case "$rest" in
           '[A'|'OA') cur=$(((cur - 1 + n) % n)) ;;
           '[B'|'OB') cur=$(((cur + 1) % n)) ;;
@@ -98,9 +98,14 @@ choose_checkbox() {
       k|K) cur=$(((cur - 1 + n) % n)) ;;
       j|J) cur=$(((cur + 1) % n)) ;;
     esac
-    [ "$n" -gt 1 ] && printf '\033[%dA' "$((n - 1))" >/dev/tty  # back to first line
   done
-  printf '\n' >/dev/tty  # advance past the last item (printed without a newline)
+  trap - INT
+  printf '\033[?1049l' >/dev/tty                      # leave alternate screen
+  # Echo the confirmed choices into the normal buffer (alt screen leaves nothing).
+  printf '%s\n' "$prompt" >/dev/tty
+  for i in $(seq 0 $((n - 1))); do
+    [ "${CHECK_STATE[$i]}" = "1" ] && printf '  ✓ %s\n' "${CHECK_ITEMS[$i]}" >/dev/tty
+  done
 }
 
 ANALYTICS_READONLY_SCOPE="https://www.googleapis.com/auth/analytics.readonly"
