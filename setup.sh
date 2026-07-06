@@ -70,11 +70,18 @@ choose_checkbox() {
   printf '%s\n' "$prompt" >/dev/tty
   printf '  (↑/↓ 이동, space 토글, Enter 확정)\n' >/dev/tty
   while true; do
-    if [ "$first" = "1" ]; then first=0; else printf '\033[%dA' "$n" >/dev/tty; fi
+    # Redraw in place. The last item is printed WITHOUT a trailing newline so the
+    # cursor never pushes past the bottom row (which would scroll the screen and
+    # break the relative cursor-up below). We then move up n-1 lines to redraw.
+    if [ "$first" = "1" ]; then first=0; elif [ "$n" -gt 1 ]; then printf '\033[%dA' "$((n - 1))" >/dev/tty; fi
     for i in $(seq 0 $((n - 1))); do
       mark=' '; [ "${CHECK_STATE[$i]}" = "1" ] && mark='x'
       pointer='  '; [ "$i" = "$cur" ] && pointer='> '
-      printf '\r\033[K%s[%s] %s\n' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
+      if [ "$i" -lt "$((n - 1))" ]; then
+        printf '\r\033[K%s[%s] %s\n' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
+      else
+        printf '\r\033[K%s[%s] %s' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
+      fi
     done
     IFS= read -rsn1 key </dev/tty
     case "$key" in
@@ -91,6 +98,7 @@ choose_checkbox() {
       j|J) cur=$(((cur + 1) % n)) ;;
     esac
   done
+  printf '\n' >/dev/tty  # advance past the last item (printed without a newline)
 }
 
 ANALYTICS_READONLY_SCOPE="https://www.googleapis.com/auth/analytics.readonly"
