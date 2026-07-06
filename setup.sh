@@ -25,6 +25,8 @@
 # Usage:
 #   bash setup.sh
 #   GA_MCP_PROJECT=my-gcp-project bash setup.sh   # skip the project prompt
+#   GA_MCP_SERVERS=ga,ads,gtm bash setup.sh
+#     # skip the server picker (values: ga, ads, gtm — comma-separated, any subset)
 #   GA_MCP_TARGETS=desktop,cli bash setup.sh
 #     # skip the target picker (values: desktop, cli — comma-separated)
 #   GA_MCP_WITH_ADS=1 GA_MCP_ADS_DEV_TOKEN=xxx bash setup.sh
@@ -91,7 +93,6 @@ choose_checkbox() {
   done
 }
 
-ANALYTICS_SCOPES="https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
 ADWORDS_SCOPE="https://www.googleapis.com/auth/adwords"
 GTM_SCOPES="https://www.googleapis.com/auth/tagmanager.readonly,https://www.googleapis.com/auth/tagmanager.edit.containers,https://www.googleapis.com/auth/tagmanager.edit.containerversions,https://www.googleapis.com/auth/tagmanager.publish"
 
@@ -153,21 +154,43 @@ if [ "$TARGET_DESKTOP" = "0" ] && [ "$TARGET_CLI" = "0" ]; then
   exit 1
 fi
 
-# --- optional: Google Ads MCP ---------------------------------------------------
-# The official google-ads-mcp server is read-only. It needs a developer token,
-# which can only be issued manually in the Google Ads API Center — so we ask.
+# --- server selection ---------------------------------------------------------
+# Which MCP servers to install: Google Analytics, Google Ads, Google Tag Manager.
+WITH_GA=0
 WITH_ADS=0
+WITH_GTM=0
+if [ -n "${GA_MCP_SERVERS:-}" ]; then
+  case ",$GA_MCP_SERVERS," in *,ga,*) WITH_GA=1 ;; esac
+  case ",$GA_MCP_SERVERS," in *,ads,*) WITH_ADS=1 ;; esac
+  case ",$GA_MCP_SERVERS," in *,gtm,*) WITH_GTM=1 ;; esac
+elif [ -r /dev/tty ]; then
+  # GA on by default; Ads/GTM pre-checked if their env flag is set.
+  ga_def=1; ads_def=0; gtm_def=0
+  [ "${GA_MCP_WITH_ADS:-}" = "1" ] && ads_def=1
+  [ "${GA_MCP_WITH_GTM:-}" = "1" ] && gtm_def=1
+  echo ""
+  CHECK_ITEMS=("Google Analytics" "Google Ads" "Google Tag Manager")
+  CHECK_STATE=("$ga_def" "$ads_def" "$gtm_def")
+  choose_checkbox "설치할 MCP 서버를 선택하세요:"
+  WITH_GA="${CHECK_STATE[0]}"
+  WITH_ADS="${CHECK_STATE[1]}"
+  WITH_GTM="${CHECK_STATE[2]}"
+else
+  # Non-interactive without GA_MCP_SERVERS: GA on, others by their env flag.
+  WITH_GA=1
+  [ "${GA_MCP_WITH_ADS:-}" = "1" ] && WITH_ADS=1
+  [ "${GA_MCP_WITH_GTM:-}" = "1" ] && WITH_GTM=1
+fi
+if [ "$WITH_GA" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
+  err "설치할 서버가 선택되지 않았습니다."
+  exit 1
+fi
+
+# --- Google Ads: developer token ----------------------------------------------
+# The official google-ads-mcp server is read-only, but needs a developer token
+# that can only be issued manually in the Google Ads API Center — so we ask.
 ADS_DEV_TOKEN="${GA_MCP_ADS_DEV_TOKEN:-}"
 ADS_LOGIN_CUSTOMER_ID="${GA_MCP_ADS_LOGIN_CUSTOMER_ID:-}"
-if [ "${GA_MCP_WITH_ADS:-}" = "1" ]; then
-  WITH_ADS=1
-else
-  echo ""
-  ask ADS_REPLY "Google Ads MCP도 함께 연결할까요? (읽기 전용, developer token 필요) [y/N]: "
-  case "$ADS_REPLY" in
-    [yY]*) WITH_ADS=1 ;;
-  esac
-fi
 if [ "$WITH_ADS" = "1" ] && [ -z "$ADS_DEV_TOKEN" ]; then
   echo ""
   info "Google Ads developer token이 필요합니다."
@@ -185,25 +208,20 @@ if [ "$WITH_ADS" = "1" ] && [ -z "$ADS_LOGIN_CUSTOMER_ID" ]; then
 fi
 ADS_LOGIN_CUSTOMER_ID="${ADS_LOGIN_CUSTOMER_ID//-/}"
 
-# --- optional: Google Tag Manager MCP -----------------------------------------
-# The GTM server supports read + write. Delete/publish stay disabled unless the
-# operator opts in with GTM_MCP_ALLOW_DESTRUCTIVE=1.
-WITH_GTM=0
+# --- Google Tag Manager: destructive gate -------------------------------------
+# GTM supports read + write. Delete/publish stay disabled unless opted in.
 GTM_ALLOW_DESTRUCTIVE="${GTM_MCP_ALLOW_DESTRUCTIVE:-}"
-if [ "${GA_MCP_WITH_GTM:-}" = "1" ]; then
-  WITH_GTM=1
-else
-  echo ""
-  ask GTM_REPLY "Google Tag Manager MCP도 함께 연결할까요? (읽기+쓰기) [y/N]: "
-  case "$GTM_REPLY" in
-    [yY]*) WITH_GTM=1 ;;
-  esac
-fi
 if [ "$WITH_GTM" = "1" ] && [ -z "$GTM_ALLOW_DESTRUCTIVE" ]; then
   ask GTM_DESTRUCTIVE_REPLY "삭제·publish 같은 위험한 쓰기도 허용할까요? (기본: 비허용) [y/N]: "
   case "$GTM_DESTRUCTIVE_REPLY" in
     [yY]*) GTM_ALLOW_DESTRUCTIVE=1 ;;
   esac
+fi
+
+# All servers may have been skipped (e.g. Ads-only with no token).
+if [ "$WITH_GA" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
+  err "설치할 서버가 없습니다."
+  exit 1
 fi
 
 # --- 1. uv (also provides Python) --------------------------------------------
@@ -251,18 +269,21 @@ fi
 
 # --- 3. MCP servers (via uv) ---------------------------------------------------
 step "3/6 · MCP 서버 설치"
-info "analytics-mcp 설치/업데이트 중... (admin 툴 포함 포크에서)"
-"$UV" tool install --force "$GA_INSTALL_SOURCE" --quiet 2>/dev/null || true
-MCP_BIN="$HOME/.local/bin/analytics-mcp"
-if [ ! -x "$MCP_BIN" ]; then
-  MCP_BIN="$(command -v analytics-mcp 2>/dev/null || true)"
+MCP_BIN=""
+if [ "$WITH_GA" = "1" ]; then
+  info "analytics-mcp 설치/업데이트 중... (admin 툴 포함 포크에서)"
+  "$UV" tool install --force "$GA_INSTALL_SOURCE" --quiet 2>/dev/null || true
+  MCP_BIN="$HOME/.local/bin/analytics-mcp"
+  if [ ! -x "$MCP_BIN" ]; then
+    MCP_BIN="$(command -v analytics-mcp 2>/dev/null || true)"
+  fi
+  if [ -z "$MCP_BIN" ] || [ ! -x "$MCP_BIN" ]; then
+    err "analytics-mcp 실행 파일을 찾을 수 없습니다."
+    err "'$UV tool install --force \"$GA_INSTALL_SOURCE\"' 를 직접 실행해 오류를 확인하세요."
+    exit 1
+  fi
+  ok "Analytics 서버 설치 완료 ($MCP_BIN)"
 fi
-if [ -z "$MCP_BIN" ] || [ ! -x "$MCP_BIN" ]; then
-  err "analytics-mcp 실행 파일을 찾을 수 없습니다."
-  err "'$UV tool install --force \"$GA_INSTALL_SOURCE\"' 를 직접 실행해 오류를 확인하세요."
-  exit 1
-fi
-ok "Analytics 서버 설치 완료 ($MCP_BIN)"
 
 ADS_MCP_BIN=""
 if [ "$WITH_ADS" = "1" ]; then
@@ -332,7 +353,8 @@ ok "프로젝트: $PROJECT"
 # first and skip the enable call when they're active — letting users without
 # the enable permission pass this step.
 step "5/6 · 필요한 API 확인"
-REQUIRED_APIS="analyticsadmin.googleapis.com analyticsdata.googleapis.com"
+REQUIRED_APIS=""
+[ "$WITH_GA" = "1" ] && REQUIRED_APIS="analyticsadmin.googleapis.com analyticsdata.googleapis.com"
 [ "$WITH_ADS" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS googleads.googleapis.com"
 [ "$WITH_GTM" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS tagmanager.googleapis.com"
 ENABLED_APIS="$("$GCLOUD" services list --enabled --project "$PROJECT" \
@@ -362,7 +384,8 @@ step "6/6 · 인증 & MCP 연결"
 info "앱용 인증(ADC) 설정 — 브라우저에서 한 번 더 로그인하세요."
 # ADC login overwrites the credentials file, so both servers share one ADC —
 # request the union of scopes in a single login.
-ADC_SCOPES="$ANALYTICS_SCOPES"
+ADC_SCOPES="https://www.googleapis.com/auth/cloud-platform"
+[ "$WITH_GA" = "1" ] && ADC_SCOPES="https://www.googleapis.com/auth/analytics.readonly,$ADC_SCOPES"
 [ "$WITH_ADS" = "1" ] && ADC_SCOPES="$ADC_SCOPES,$ADWORDS_SCOPE"
 [ "$WITH_GTM" = "1" ] && ADC_SCOPES="$ADC_SCOPES,$GTM_SCOPES"
 "$GCLOUD" auth application-default login --scopes="$ADC_SCOPES"
@@ -377,7 +400,7 @@ ok "인증 설정 완료"
 # Build the server definitions once; every selected client reuses them.
 SERVERS_JSON="$(mktemp)"
 trap 'rm -f "$SERVERS_JSON"' EXIT
-MCP_BIN="$MCP_BIN" ADC_PATH="$ADC_PATH" PROJECT="$PROJECT" \
+WITH_GA="$WITH_GA" MCP_BIN="$MCP_BIN" ADC_PATH="$ADC_PATH" PROJECT="$PROJECT" \
 WITH_ADS="$WITH_ADS" ADS_MCP_BIN="$ADS_MCP_BIN" ADS_DEV_TOKEN="$ADS_DEV_TOKEN" \
 ADS_LOGIN_CUSTOMER_ID="$ADS_LOGIN_CUSTOMER_ID" \
 WITH_GTM="$WITH_GTM" GTM_MCP_BIN="$GTM_MCP_BIN" GTM_ALLOW_DESTRUCTIVE="$GTM_ALLOW_DESTRUCTIVE" \
@@ -386,14 +409,15 @@ SERVERS_JSON="$SERVERS_JSON" \
 import json, os
 
 servers = {}
-servers["analytics-mcp"] = {
-    "command": os.environ["MCP_BIN"],
-    "args": [],
-    "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
-        "GOOGLE_CLOUD_PROJECT": os.environ["PROJECT"],
-    },
-}
+if os.environ.get("WITH_GA") == "1":
+    servers["analytics-mcp"] = {
+        "command": os.environ["MCP_BIN"],
+        "args": [],
+        "env": {
+            "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
+            "GOOGLE_CLOUD_PROJECT": os.environ["PROJECT"],
+        },
+    }
 
 if os.environ.get("WITH_ADS") == "1":
     ads_env = {
@@ -426,9 +450,10 @@ with open(os.environ["SERVERS_JSON"], "w") as f:
     json.dump(servers, f)
 PY
 
-SERVER_NAMES="analytics-mcp"
-[ "$WITH_ADS" = "1" ] && SERVER_NAMES="$SERVER_NAMES, google-ads-mcp"
-[ "$WITH_GTM" = "1" ] && SERVER_NAMES="$SERVER_NAMES, tagmanager-mcp"
+SERVER_NAMES=""
+[ "$WITH_GA" = "1" ] && SERVER_NAMES="analytics-mcp"
+[ "$WITH_ADS" = "1" ] && SERVER_NAMES="${SERVER_NAMES:+$SERVER_NAMES, }google-ads-mcp"
+[ "$WITH_GTM" = "1" ] && SERVER_NAMES="${SERVER_NAMES:+$SERVER_NAMES, }tagmanager-mcp"
 
 # Claude Desktop: merge the servers into its config JSON.
 if [ "$TARGET_DESKTOP" = "1" ]; then
@@ -486,25 +511,22 @@ fi
 # --- done ---------------------------------------------------------------------
 printf '\n%s설치가 끝났습니다 🎉%s\n' "$C_GREEN$C_BOLD" "$C_OFF"
 echo "다음 단계:"
-if [ "$TARGET_DESKTOP" = "1" ]; then
-  echo "  • Claude Desktop을 완전히 종료했다가 다시 실행하세요."
-  echo "    새 대화에서:  내 Google Analytics 속성 목록을 보여줘"
-fi
-if [ "$TARGET_CLI" = "1" ]; then
-  echo "  • Claude Code CLI:  claude mcp list 로 등록을 확인하세요."
-  echo "    대화에서:  내 Google Analytics 속성 목록을 보여줘"
-fi
+[ "$TARGET_DESKTOP" = "1" ] && echo "  • Claude Desktop을 완전히 종료했다가 다시 실행하세요."
+[ "$TARGET_CLI" = "1" ] && echo "  • Claude Code CLI:  claude mcp list 로 등록을 확인하세요."
+echo ""
+echo "이렇게 물어보세요:"
+[ "$WITH_GA" = "1" ] && echo "  • 내 Google Analytics 속성 목록을 보여줘"
+[ "$WITH_ADS" = "1" ] && echo "  • 내가 접근할 수 있는 Google Ads 계정 보여줘"
+[ "$WITH_GTM" = "1" ] && echo "  • 내 GTM 계정과 컨테이너 목록 보여줘"
 if [ "$WITH_ADS" = "1" ]; then
-  echo "     Google Ads도 물어보세요:      내가 접근할 수 있는 Google Ads 계정 보여줘"
   echo ""
   echo "참고: developer token은 설정 파일에 평문으로 저장됩니다."
 fi
 if [ "$WITH_GTM" = "1" ]; then
-  echo "     Google Tag Manager도 물어보세요:  내 GTM 계정과 컨테이너 목록 보여줘"
   if [ "$GTM_ALLOW_DESTRUCTIVE" = "1" ]; then
-    echo "     (삭제·publish 허용됨 — GTM_MCP_ALLOW_DESTRUCTIVE=1)"
+    echo "참고: GTM 삭제·publish 허용됨 (GTM_MCP_ALLOW_DESTRUCTIVE=1)"
   else
-    echo "     (삭제·publish는 비활성. 켜려면 설정의 tagmanager-mcp env에 GTM_MCP_ALLOW_DESTRUCTIVE=1 추가)"
+    echo "참고: GTM 삭제·publish 비활성 (켜려면 tagmanager-mcp env에 GTM_MCP_ALLOW_DESTRUCTIVE=1 추가)"
   fi
 fi
 if [ "$TARGET_DESKTOP" = "1" ]; then

@@ -27,10 +27,11 @@ curl -fsSL https://raw.githubusercontent.com/seob717/google-marketing-mcp/main/s
 
 The script:
 
-1. Asks which clients to set up — `space` to toggle **Claude Desktop** /
+1. Asks which **servers** to install — `space` to toggle **Google Analytics** /
+   **Google Ads** / **Google Tag Manager** (any subset, e.g. GA only). Skip with
+   `GA_MCP_SERVERS=ga,ads,gtm`.
+2. Asks which **clients** to set up — `space` to toggle **Claude Desktop** /
    **Claude Code CLI** (or `GA_MCP_TARGETS=desktop,cli`).
-2. Asks whether to add **Google Ads** and **Google Tag Manager** (or
-   `GA_MCP_WITH_ADS=1`, `GA_MCP_WITH_GTM=1`).
 3. Installs the servers via `uv`, installs the Google Cloud SDK if missing.
 4. Signs you in once (ADC) with the union of scopes for whichever servers you chose.
 5. Enables the required APIs and registers the servers into your clients.
