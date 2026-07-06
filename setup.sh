@@ -62,43 +62,30 @@ ask() {
   printf -v "$__var" '%s' "$__reply"
 }
 
-# Interactive checkbox selector driven from /dev/tty.
-# Caller sets CHECK_ITEMS (labels) and CHECK_STATE (0/1 defaults), same length.
-# ↑/↓ (or k/j) move, space toggles, Enter confirms. Updates CHECK_STATE in place.
+# Numbered multi-select driven from /dev/tty. No cursor control / raw mode, so it
+# works in any terminal (incl. GPU terminals like Warp that ignore ANSI cursor
+# moves). Caller sets CHECK_ITEMS (labels) and CHECK_STATE (0/1 defaults), same
+# length. Type a number to toggle it (several allowed, space/comma separated),
+# Enter confirms. Updates CHECK_STATE in place.
 choose_checkbox() {
-  local prompt="$1" n=${#CHECK_ITEMS[@]} cur=0 key rest i mark pointer first=1
-  printf '%s\n' "$prompt" >/dev/tty
-  printf '  (↑/↓ 이동, space 토글, Enter 확정)\n' >/dev/tty
+  local prompt="$1" n=${#CHECK_ITEMS[@]} sel i mark tok
   while true; do
-    # Redraw in place. The last item is printed WITHOUT a trailing newline so the
-    # cursor never pushes past the bottom row (which would scroll the screen and
-    # break the relative cursor-up below). We then move up n-1 lines to redraw.
-    if [ "$first" = "1" ]; then first=0; elif [ "$n" -gt 1 ]; then printf '\033[%dA' "$((n - 1))" >/dev/tty; fi
+    printf '\n%s\n' "$prompt" >/dev/tty
     for i in $(seq 0 $((n - 1))); do
       mark=' '; [ "${CHECK_STATE[$i]}" = "1" ] && mark='x'
-      pointer='  '; [ "$i" = "$cur" ] && pointer='> '
-      if [ "$i" -lt "$((n - 1))" ]; then
-        printf '\r\033[K%s[%s] %s\n' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
-      else
-        printf '\r\033[K%s[%s] %s' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
+      printf '  %d) [%s] %s\n' "$((i + 1))" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
+    done
+    printf '  번호 입력=토글(여러 개는 공백/쉼표), Enter=확정 > ' >/dev/tty
+    IFS= read -r sel </dev/tty || sel=""
+    [ -z "$sel" ] && break
+    for tok in ${sel//,/ }; do
+      case "$tok" in ''|*[!0-9]*) continue ;; esac
+      if [ "$tok" -ge 1 ] && [ "$tok" -le "$n" ]; then
+        i=$((tok - 1))
+        CHECK_STATE[i]=$([ "${CHECK_STATE[i]}" = "1" ] && echo 0 || echo 1)
       fi
     done
-    IFS= read -rsn1 key </dev/tty
-    case "$key" in
-      '') break ;;
-      ' ') CHECK_STATE[cur]=$([ "${CHECK_STATE[cur]}" = "1" ] && echo 0 || echo 1) ;;
-      $'\033')
-        IFS= read -rsn2 -t 0.01 rest </dev/tty || true
-        case "$rest" in
-          '[A') cur=$(((cur - 1 + n) % n)) ;;
-          '[B') cur=$(((cur + 1) % n)) ;;
-        esac
-        ;;
-      k|K) cur=$(((cur - 1 + n) % n)) ;;
-      j|J) cur=$(((cur + 1) % n)) ;;
-    esac
   done
-  printf '\n' >/dev/tty  # advance past the last item (printed without a newline)
 }
 
 ANALYTICS_READONLY_SCOPE="https://www.googleapis.com/auth/analytics.readonly"
