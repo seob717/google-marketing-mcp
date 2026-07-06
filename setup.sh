@@ -42,8 +42,10 @@ set -euo pipefail
 if [ -t 1 ]; then
   C_BLUE=$'\033[0;34m'; C_GREEN=$'\033[0;32m'; C_YELLOW=$'\033[0;33m'
   C_RED=$'\033[0;31m'; C_BOLD=$'\033[1m'; C_OFF=$'\033[0m'
+  C_CYAN=$'\033[0;36m'; C_DIM=$'\033[2m'
 else
   C_BLUE=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_BOLD=''; C_OFF=''
+  C_CYAN=''; C_DIM=''
 fi
 info() { printf '%s▶%s %s\n' "$C_BLUE" "$C_OFF" "$1"; }
 ok()   { printf '%s✓%s %s\n' "$C_GREEN" "$C_OFF" "$1"; }
@@ -72,18 +74,29 @@ ask() {
 # (|| ...) so a stray non-zero status can't trip `set -e`, and an INT trap leaves
 # the alt screen before aborting so Ctrl-C never strands the terminal.
 choose_checkbox() {
-  local prompt="$1" n=${#CHECK_ITEMS[@]} cur=0 key rest i mark pointer
+  local prompt="$1" n=${#CHECK_ITEMS[@]} cur=0 key rest i bar
+  bar="${C_CYAN}│${C_OFF}"
   printf '\033[?1049h' >/dev/tty                     # enter alternate screen
   trap 'printf "\033[?1049l" >/dev/tty; exit 130' INT
   while true; do
     printf '\033[H\033[2J' >/dev/tty                 # home + clear
-    printf '%s\n' "$prompt" >/dev/tty
-    printf '  (↑/↓ 이동, space 토글, Enter 확정)\n\n' >/dev/tty
+    printf '\n%s %s%s%s\n' "$bar" "$C_BOLD" "$prompt" "$C_OFF" >/dev/tty
+    printf '%s %s↑/↓ 이동 · space 선택 · Enter 확정%s\n%s\n' \
+      "$bar" "$C_DIM" "$C_OFF" "$bar" >/dev/tty
     for i in $(seq 0 $((n - 1))); do
-      mark=' '; [ "${CHECK_STATE[$i]}" = "1" ] && mark='x'
-      pointer='  '; [ "$i" = "$cur" ] && pointer='> '
-      printf '  %s[%s] %s\n' "$pointer" "$mark" "${CHECK_ITEMS[$i]}" >/dev/tty
+      if [ "$i" = "$cur" ]; then                     # current row: cyan + pointer
+        if [ "${CHECK_STATE[$i]}" = "1" ]; then
+          printf '%s %s❯ ◉ %s%s\n' "$bar" "$C_CYAN" "${CHECK_ITEMS[$i]}" "$C_OFF" >/dev/tty
+        else
+          printf '%s %s❯ ◯ %s%s\n' "$bar" "$C_CYAN" "${CHECK_ITEMS[$i]}" "$C_OFF" >/dev/tty
+        fi
+      elif [ "${CHECK_STATE[$i]}" = "1" ]; then        # selected, not current
+        printf '%s   %s◉%s %s\n' "$bar" "$C_GREEN" "$C_OFF" "${CHECK_ITEMS[$i]}" >/dev/tty
+      else                                             # unselected, not current
+        printf '%s   %s◯ %s%s\n' "$bar" "$C_DIM" "${CHECK_ITEMS[$i]}" "$C_OFF" >/dev/tty
+      fi
     done
+    printf '%s\n' "$bar" >/dev/tty
     IFS= read -rsn1 key </dev/tty || key=''
     case "$key" in
       '') break ;;
@@ -106,9 +119,9 @@ choose_checkbox() {
   trap - INT
   printf '\033[?1049l' >/dev/tty                      # leave alternate screen
   # Echo the confirmed choices into the normal buffer (alt screen leaves nothing).
-  printf '%s\n' "$prompt" >/dev/tty
+  printf '%s %s%s%s\n' "$bar" "$C_BOLD" "$prompt" "$C_OFF" >/dev/tty
   for i in $(seq 0 $((n - 1))); do
-    [ "${CHECK_STATE[$i]}" = "1" ] && printf '  ✓ %s\n' "${CHECK_ITEMS[$i]}" >/dev/tty
+    [ "${CHECK_STATE[$i]}" = "1" ] && printf '%s   %s✓%s %s\n' "$bar" "$C_GREEN" "$C_OFF" "${CHECK_ITEMS[$i]}" >/dev/tty
   done
 }
 
