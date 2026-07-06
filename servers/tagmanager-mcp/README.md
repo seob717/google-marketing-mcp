@@ -6,9 +6,9 @@ to LLM clients (Claude Desktop, Claude Code CLI, …). It runs as a stdio
 subprocess — no hosting, no ports — and authenticates with your local
 [Application Default Credentials (ADC)](https://cloud.google.com/docs/authentication/provide-credentials-adc).
 
-> This package lives inside the `google-analytics-mcp` fork for now and is
-> designed to be extracted into its own repository later: it has no imports
-> from the sibling `analytics_mcp` package and ships its own `pyproject.toml`.
+> Part of [google-marketing-mcp](../../README.md). This package is
+> self-contained — it has no imports from other servers and ships its own
+> `pyproject.toml`, so it can be installed on its own.
 
 ## Tools 🛠️
 
@@ -49,7 +49,7 @@ affect a workspace until published.
 3. Install the server (from this fork, until it has its own repo):
 
    ```shell
-   uv tool install "git+https://github.com/seob717/google-analytics-mcp.git@feat/google-ads-mcp-setup#subdirectory=gtm-mcp"
+   uv tool install "git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/tagmanager-mcp"
    ```
 
 4. Register it with the Claude Code CLI (user scope):
