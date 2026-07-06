@@ -1,0 +1,35 @@
+[project]
+name = "ga4-admin-mcp"
+description = "Read-only MCP server for the Google Analytics Admin API (data streams, change history)"
+version = "0.1.0"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+readme = "README.md"
+dependencies = [
+    "google-analytics-admin==0.29.0",
+    "google-auth~=2.40",
+    "mcp>=1.24.0",
+    "google-adk>=1.29.0",
+]
+keywords = ["google analytics", "ga4", "admin", "mcp", "change history"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+    "Topic :: Internet",
+]
+
+[project.scripts]
+ga4-admin-mcp = "ga4_admin_mcp.server:run_server"
+
+[project.optional-dependencies]
+dev = ["black", "pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["setuptools>=82.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ga4_admin_mcp*"]

@@ -25,8 +25,8 @@
 # Usage:
 #   bash setup.sh
 #   GA_MCP_PROJECT=my-gcp-project bash setup.sh   # skip the project prompt
-#   GA_MCP_SERVERS=ga,ads,gtm bash setup.sh
-#     # skip the server picker (values: ga, ads, gtm — comma-separated, any subset)
+#   GA_MCP_SERVERS=ga,ga-admin,ads,gtm bash setup.sh
+#     # skip the server picker (values: ga, ga-admin, ads, gtm — any subset)
 #   GA_MCP_TARGETS=desktop,cli bash setup.sh
 #     # skip the target picker (values: desktop, cli — comma-separated)
 #   GA_MCP_WITH_ADS=1 GA_MCP_ADS_DEV_TOKEN=xxx bash setup.sh
@@ -93,21 +93,26 @@ choose_checkbox() {
   done
 }
 
+ANALYTICS_READONLY_SCOPE="https://www.googleapis.com/auth/analytics.readonly"
+ANALYTICS_EDIT_SCOPE="https://www.googleapis.com/auth/analytics.edit"
 ADWORDS_SCOPE="https://www.googleapis.com/auth/adwords"
 GTM_SCOPES="https://www.googleapis.com/auth/tagmanager.readonly,https://www.googleapis.com/auth/tagmanager.edit.containers,https://www.googleapis.com/auth/tagmanager.edit.containerversions,https://www.googleapis.com/auth/tagmanager.publish"
 
 # --- install sources ----------------------------------------------------------
-# The three MCP servers come from three places, each overridable by env:
-#   - GA:  our google-analytics-mcp fork (includes the read-only admin tools).
-#   - Ads: official PyPI package.
-#   - GTM: this repo (tagmanager-mcp lives under servers/tagmanager-mcp).
-GA_INSTALL_SOURCE="${GA_INSTALL_SOURCE:-git+https://github.com/seob717/google-analytics-mcp.git@feat/google-ads-mcp-setup}"
+# Official servers come from PyPI (they track their own upstream); our own
+# servers come from this repo. Each is overridable by env.
+#   - GA reporting: official PyPI `analytics-mcp`.
+#   - GA admin:     this repo (ga4-admin-mcp under servers/ga4-admin-mcp).
+#   - Ads:          official PyPI `google-ads-mcp`.
+#   - GTM:          this repo (tagmanager-mcp under servers/tagmanager-mcp).
+GA_PACKAGE="${GA_PACKAGE:-analytics-mcp}"
+GA_ADMIN_INSTALL_SOURCE="${GA_ADMIN_INSTALL_SOURCE:-git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/ga4-admin-mcp}"
 ADS_PACKAGE="${ADS_PACKAGE:-google-ads-mcp}"
 GTM_INSTALL_SOURCE="${GTM_INSTALL_SOURCE:-git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/tagmanager-mcp}"
 CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 ADC_PATH="$HOME/.config/gcloud/application_default_credentials.json"
 
-printf '%s%s%s\n' "$C_BOLD" "Google Marketing MCP · 설치 (GA · Ads · GTM)" "$C_OFF"
+printf '%s%s%s\n' "$C_BOLD" "Google Marketing MCP · 설치 (GA · GA Admin · Ads · GTM)" "$C_OFF"
 echo "필요한 도구 설치 → Google 로그인 → Claude Desktop/CLI 연결까지 자동으로 진행합니다."
 echo "(Homebrew 없이 동작합니다)"
 
@@ -155,33 +160,37 @@ if [ "$TARGET_DESKTOP" = "0" ] && [ "$TARGET_CLI" = "0" ]; then
 fi
 
 # --- server selection ---------------------------------------------------------
-# Which MCP servers to install: Google Analytics, Google Ads, Google Tag Manager.
+# Which MCP servers to install. GA (reporting) and GA Admin (data streams /
+# change history) are separate: admin needs the broader analytics.edit scope.
 WITH_GA=0
+WITH_GA_ADMIN=0
 WITH_ADS=0
 WITH_GTM=0
 if [ -n "${GA_MCP_SERVERS:-}" ]; then
   case ",$GA_MCP_SERVERS," in *,ga,*) WITH_GA=1 ;; esac
+  case ",$GA_MCP_SERVERS," in *,ga-admin,*) WITH_GA_ADMIN=1 ;; esac
   case ",$GA_MCP_SERVERS," in *,ads,*) WITH_ADS=1 ;; esac
   case ",$GA_MCP_SERVERS," in *,gtm,*) WITH_GTM=1 ;; esac
 elif [ -r /dev/tty ]; then
   # GA on by default; Ads/GTM pre-checked if their env flag is set.
-  ga_def=1; ads_def=0; gtm_def=0
+  ads_def=0; gtm_def=0
   [ "${GA_MCP_WITH_ADS:-}" = "1" ] && ads_def=1
   [ "${GA_MCP_WITH_GTM:-}" = "1" ] && gtm_def=1
   echo ""
-  CHECK_ITEMS=("Google Analytics" "Google Ads" "Google Tag Manager")
-  CHECK_STATE=("$ga_def" "$ads_def" "$gtm_def")
+  CHECK_ITEMS=("Google Analytics" "Google Analytics Admin (data streams · change history)" "Google Ads" "Google Tag Manager")
+  CHECK_STATE=(1 0 "$ads_def" "$gtm_def")
   choose_checkbox "설치할 MCP 서버를 선택하세요:"
   WITH_GA="${CHECK_STATE[0]}"
-  WITH_ADS="${CHECK_STATE[1]}"
-  WITH_GTM="${CHECK_STATE[2]}"
+  WITH_GA_ADMIN="${CHECK_STATE[1]}"
+  WITH_ADS="${CHECK_STATE[2]}"
+  WITH_GTM="${CHECK_STATE[3]}"
 else
   # Non-interactive without GA_MCP_SERVERS: GA on, others by their env flag.
   WITH_GA=1
   [ "${GA_MCP_WITH_ADS:-}" = "1" ] && WITH_ADS=1
   [ "${GA_MCP_WITH_GTM:-}" = "1" ] && WITH_GTM=1
 fi
-if [ "$WITH_GA" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
+if [ "$WITH_GA" = "0" ] && [ "$WITH_GA_ADMIN" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
   err "설치할 서버가 선택되지 않았습니다."
   exit 1
 fi
@@ -219,7 +228,7 @@ if [ "$WITH_GTM" = "1" ] && [ -z "$GTM_ALLOW_DESTRUCTIVE" ]; then
 fi
 
 # All servers may have been skipped (e.g. Ads-only with no token).
-if [ "$WITH_GA" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
+if [ "$WITH_GA" = "0" ] && [ "$WITH_GA_ADMIN" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
   err "설치할 서버가 없습니다."
   exit 1
 fi
@@ -271,18 +280,35 @@ fi
 step "3/6 · MCP 서버 설치"
 MCP_BIN=""
 if [ "$WITH_GA" = "1" ]; then
-  info "analytics-mcp 설치/업데이트 중... (admin 툴 포함 포크에서)"
-  "$UV" tool install --force "$GA_INSTALL_SOURCE" --quiet 2>/dev/null || true
+  info "analytics-mcp 설치/업데이트 중... (공식 PyPI)"
+  "$UV" tool install "$GA_PACKAGE" --quiet 2>/dev/null \
+    || "$UV" tool upgrade "$GA_PACKAGE" --quiet 2>/dev/null || true
   MCP_BIN="$HOME/.local/bin/analytics-mcp"
   if [ ! -x "$MCP_BIN" ]; then
     MCP_BIN="$(command -v analytics-mcp 2>/dev/null || true)"
   fi
   if [ -z "$MCP_BIN" ] || [ ! -x "$MCP_BIN" ]; then
     err "analytics-mcp 실행 파일을 찾을 수 없습니다."
-    err "'$UV tool install --force \"$GA_INSTALL_SOURCE\"' 를 직접 실행해 오류를 확인하세요."
+    err "'$UV tool install $GA_PACKAGE' 를 직접 실행해 오류를 확인하세요."
     exit 1
   fi
   ok "Analytics 서버 설치 완료 ($MCP_BIN)"
+fi
+
+GA_ADMIN_MCP_BIN=""
+if [ "$WITH_GA_ADMIN" = "1" ]; then
+  info "ga4-admin-mcp 설치/업데이트 중... (이 레포에서)"
+  "$UV" tool install --force "$GA_ADMIN_INSTALL_SOURCE" --quiet 2>/dev/null || true
+  GA_ADMIN_MCP_BIN="$HOME/.local/bin/ga4-admin-mcp"
+  if [ ! -x "$GA_ADMIN_MCP_BIN" ]; then
+    GA_ADMIN_MCP_BIN="$(command -v ga4-admin-mcp 2>/dev/null || true)"
+  fi
+  if [ -z "$GA_ADMIN_MCP_BIN" ] || [ ! -x "$GA_ADMIN_MCP_BIN" ]; then
+    err "ga4-admin-mcp 실행 파일을 찾을 수 없습니다."
+    err "'$UV tool install --force \"$GA_ADMIN_INSTALL_SOURCE\"' 를 직접 실행해 오류를 확인하세요."
+    exit 1
+  fi
+  ok "GA Admin 서버 설치 완료 ($GA_ADMIN_MCP_BIN)"
 fi
 
 ADS_MCP_BIN=""
@@ -354,7 +380,8 @@ ok "프로젝트: $PROJECT"
 # the enable permission pass this step.
 step "5/6 · 필요한 API 확인"
 REQUIRED_APIS=""
-[ "$WITH_GA" = "1" ] && REQUIRED_APIS="analyticsadmin.googleapis.com analyticsdata.googleapis.com"
+{ [ "$WITH_GA" = "1" ] || [ "$WITH_GA_ADMIN" = "1" ]; } && REQUIRED_APIS="analyticsadmin.googleapis.com"
+[ "$WITH_GA" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS analyticsdata.googleapis.com"
 [ "$WITH_ADS" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS googleads.googleapis.com"
 [ "$WITH_GTM" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS tagmanager.googleapis.com"
 ENABLED_APIS="$("$GCLOUD" services list --enabled --project "$PROJECT" \
@@ -385,7 +412,8 @@ info "앱용 인증(ADC) 설정 — 브라우저에서 한 번 더 로그인하�
 # ADC login overwrites the credentials file, so both servers share one ADC —
 # request the union of scopes in a single login.
 ADC_SCOPES="https://www.googleapis.com/auth/cloud-platform"
-[ "$WITH_GA" = "1" ] && ADC_SCOPES="https://www.googleapis.com/auth/analytics.readonly,$ADC_SCOPES"
+{ [ "$WITH_GA" = "1" ] || [ "$WITH_GA_ADMIN" = "1" ]; } && ADC_SCOPES="$ANALYTICS_READONLY_SCOPE,$ADC_SCOPES"
+[ "$WITH_GA_ADMIN" = "1" ] && ADC_SCOPES="$ANALYTICS_EDIT_SCOPE,$ADC_SCOPES"
 [ "$WITH_ADS" = "1" ] && ADC_SCOPES="$ADC_SCOPES,$ADWORDS_SCOPE"
 [ "$WITH_GTM" = "1" ] && ADC_SCOPES="$ADC_SCOPES,$GTM_SCOPES"
 "$GCLOUD" auth application-default login --scopes="$ADC_SCOPES"
@@ -401,6 +429,7 @@ ok "인증 설정 완료"
 SERVERS_JSON="$(mktemp)"
 trap 'rm -f "$SERVERS_JSON"' EXIT
 WITH_GA="$WITH_GA" MCP_BIN="$MCP_BIN" ADC_PATH="$ADC_PATH" PROJECT="$PROJECT" \
+WITH_GA_ADMIN="$WITH_GA_ADMIN" GA_ADMIN_MCP_BIN="$GA_ADMIN_MCP_BIN" \
 WITH_ADS="$WITH_ADS" ADS_MCP_BIN="$ADS_MCP_BIN" ADS_DEV_TOKEN="$ADS_DEV_TOKEN" \
 ADS_LOGIN_CUSTOMER_ID="$ADS_LOGIN_CUSTOMER_ID" \
 WITH_GTM="$WITH_GTM" GTM_MCP_BIN="$GTM_MCP_BIN" GTM_ALLOW_DESTRUCTIVE="$GTM_ALLOW_DESTRUCTIVE" \
@@ -412,6 +441,16 @@ servers = {}
 if os.environ.get("WITH_GA") == "1":
     servers["analytics-mcp"] = {
         "command": os.environ["MCP_BIN"],
+        "args": [],
+        "env": {
+            "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
+            "GOOGLE_CLOUD_PROJECT": os.environ["PROJECT"],
+        },
+    }
+
+if os.environ.get("WITH_GA_ADMIN") == "1":
+    servers["ga4-admin-mcp"] = {
+        "command": os.environ["GA_ADMIN_MCP_BIN"],
         "args": [],
         "env": {
             "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
@@ -452,6 +491,7 @@ PY
 
 SERVER_NAMES=""
 [ "$WITH_GA" = "1" ] && SERVER_NAMES="analytics-mcp"
+[ "$WITH_GA_ADMIN" = "1" ] && SERVER_NAMES="${SERVER_NAMES:+$SERVER_NAMES, }ga4-admin-mcp"
 [ "$WITH_ADS" = "1" ] && SERVER_NAMES="${SERVER_NAMES:+$SERVER_NAMES, }google-ads-mcp"
 [ "$WITH_GTM" = "1" ] && SERVER_NAMES="${SERVER_NAMES:+$SERVER_NAMES, }tagmanager-mcp"
 
@@ -516,6 +556,7 @@ echo "다음 단계:"
 echo ""
 echo "이렇게 물어보세요:"
 [ "$WITH_GA" = "1" ] && echo "  • 내 Google Analytics 속성 목록을 보여줘"
+[ "$WITH_GA_ADMIN" = "1" ] && echo "  • 이 속성의 데이터 스트림과 최근 변경 기록을 보여줘"
 [ "$WITH_ADS" = "1" ] && echo "  • 내가 접근할 수 있는 Google Ads 계정 보여줘"
 [ "$WITH_GTM" = "1" ] && echo "  • 내 GTM 계정과 컨테이너 목록 보여줘"
 if [ "$WITH_ADS" = "1" ]; then

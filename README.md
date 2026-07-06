@@ -10,14 +10,17 @@ the clients you choose.
 
 | Server | Package | Source | Capability |
 |---|---|---|---|
-| Google Analytics | `analytics-mcp` | [our GA fork](https://github.com/seob717/google-analytics-mcp) | reporting (Data API) **+ read-only admin** (data streams, change history) |
+| Google Analytics | `analytics-mcp` | official PyPI | reporting (Data API) |
+| Google Analytics Admin | `ga4-admin-mcp` | `servers/ga4-admin-mcp` (this repo) | read-only admin: data streams, `getGlobalSiteTag`, change history |
 | Google Ads | `google-ads-mcp` | official PyPI | read-only ads reporting |
 | Google Tag Manager | `tagmanager-mcp` | `servers/tagmanager-mcp` (this repo) | **read + write** (tags/triggers/variables, versions, publish) |
 
-The GA server is installed from our fork rather than PyPI because it adds the
-read-only Admin tools (data streams, `getGlobalSiteTag`, Change History) that the
-official package doesn't ship. GTM's destructive ops (delete/publish) stay gated
-behind `GTM_MCP_ALLOW_DESTRUCTIVE=1`.
+**Design:** the official servers (GA, Ads) install straight from PyPI, so they
+track their own upstream automatically. Our own additions — GA Admin and GTM —
+live here under `servers/`. No fork to maintain. GA Admin is separate from GA
+reporting because its change-history tool needs the broader `analytics.edit`
+scope; GTM's destructive ops (delete/publish) stay gated behind
+`GTM_MCP_ALLOW_DESTRUCTIVE=1`.
 
 ## Quick start (macOS)
 
@@ -28,8 +31,8 @@ curl -fsSL https://raw.githubusercontent.com/seob717/google-marketing-mcp/main/s
 The script:
 
 1. Asks which **servers** to install — `space` to toggle **Google Analytics** /
-   **Google Ads** / **Google Tag Manager** (any subset, e.g. GA only). Skip with
-   `GA_MCP_SERVERS=ga,ads,gtm`.
+   **Google Analytics Admin** / **Google Ads** / **Google Tag Manager** (any
+   subset, e.g. GA only). Skip with `GA_MCP_SERVERS=ga,ga-admin,ads,gtm`.
 2. Asks which **clients** to set up — `space` to toggle **Claude Desktop** /
    **Claude Code CLI** (or `GA_MCP_TARGETS=desktop,cli`).
 3. Installs the servers via `uv`, installs the Google Cloud SDK if missing.
@@ -44,9 +47,10 @@ GA_MCP_TARGETS=cli GA_MCP_WITH_ADS=1 GA_MCP_ADS_DEV_TOKEN=xxx GA_MCP_WITH_GTM=1 
 
 ### Scopes note
 
-Most reads work with `analytics.readonly`. GA4 **Change History** additionally
-requires the broader `analytics.edit` scope — add it to the ADC login only if you
-want that tool.
+Most reads work with `analytics.readonly`. Selecting **Google Analytics Admin**
+adds the broader `analytics.edit` scope (its change-history tool requires it).
+Selecting **Google Ads** adds the `adwords` scope. The installer requests the
+union in a single ADC login.
 
 ## Layout
 
@@ -54,20 +58,18 @@ want that tool.
 google-marketing-mcp/
   setup.sh                     # unified installer
   servers/
-    tagmanager-mcp/            # GTM MCP server (read + write)
-      pyproject.toml
-      tagmanager_mcp/
-      tests/
+    ga4-admin-mcp/            # GA4 Admin MCP server (read-only)
+    tagmanager-mcp/          # GTM MCP server (read + write)
 ```
 
-GA and Ads are not vendored here — the installer pulls them from their own
-sources (GA fork / PyPI). Override any source via `GA_INSTALL_SOURCE`,
-`ADS_PACKAGE`, or `GTM_INSTALL_SOURCE`.
+GA reporting and Ads aren't vendored here — the installer pulls them from PyPI.
+Override any source via `GA_PACKAGE`, `ADS_PACKAGE`, `GA_ADMIN_INSTALL_SOURCE`,
+or `GTM_INSTALL_SOURCE`.
 
-## Develop the GTM server
+## Develop the servers
 
 ```shell
-cd servers/tagmanager-mcp
+cd servers/ga4-admin-mcp   # or servers/tagmanager-mcp
 uv sync --extra dev
 uv run pytest
 ```
