@@ -89,7 +89,11 @@ choose_checkbox() {
       '') break ;;
       ' ') CHECK_STATE[cur]=$([ "${CHECK_STATE[cur]}" = "1" ] && echo 0 || echo 1) ;;
       $'\033')
-        IFS= read -rsn2 -t 0.1 rest </dev/tty || rest=''
+        # -t must be an INTEGER: macOS system bash 3.2 rejects fractional timeouts
+        # ("invalid timeout specification"), which would break arrow reads. Arrow
+        # keys deliver their 2 trailing bytes immediately, so read returns at once;
+        # the 1s only bounds a lone ESC keypress.
+        IFS= read -rsn2 -t 1 rest </dev/tty || rest=''
         case "$rest" in
           '[A'|'OA') cur=$(((cur - 1 + n) % n)) ;;
           '[B'|'OB') cur=$(((cur + 1) % n)) ;;
