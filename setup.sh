@@ -41,11 +41,9 @@ set -euo pipefail
 # --- pretty logging -----------------------------------------------------------
 if [ -t 1 ]; then
   C_BLUE=$'\033[0;34m'; C_GREEN=$'\033[0;32m'; C_YELLOW=$'\033[0;33m'
-  C_RED=$'\033[0;31m'; C_BOLD=$'\033[1m'; C_OFF=$'\033[0m'
-  C_CYAN=$'\033[0;36m'; C_DIM=$'\033[2m'
+  C_RED=$'\033[0;31m'; C_BOLD=$'\033[1m'; C_OFF=$'\033[0m'; C_DIM=$'\033[2m'
 else
-  C_BLUE=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_BOLD=''; C_OFF=''
-  C_CYAN=''; C_DIM=''
+  C_BLUE=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_BOLD=''; C_OFF=''; C_DIM=''
 fi
 info() { printf '%s▶%s %s\n' "$C_BLUE" "$C_OFF" "$1"; }
 ok()   { printf '%s✓%s %s\n' "$C_GREEN" "$C_OFF" "$1"; }
@@ -64,65 +62,21 @@ ask() {
   printf -v "$__var" '%s' "$__reply"
 }
 
-# Interactive checkbox selector driven from /dev/tty (↑/↓ or k/j move, space
-# toggles, Enter confirms). Caller sets CHECK_ITEMS (labels) and CHECK_STATE
-# (0/1 defaults), same length. Updates CHECK_STATE in place.
-#
-# Uses the alternate screen buffer (the same mechanism vim/fzf use): we clear
-# and redraw from the home position every frame, so there is no relative cursor
-# math and scrolling can never desync the display. Every /dev/tty read is guarded
-# (|| ...) so a stray non-zero status can't trip `set -e`, and an INT trap leaves
-# the alt screen before aborting so Ctrl-C never strands the terminal.
-choose_checkbox() {
-  local prompt="$1" n=${#CHECK_ITEMS[@]} cur=0 key rest i bar
-  bar="${C_CYAN}│${C_OFF}"
-  printf '\033[?1049h' >/dev/tty                     # enter alternate screen
-  trap 'printf "\033[?1049l" >/dev/tty; exit 130' INT
-  while true; do
-    printf '\033[H\033[2J' >/dev/tty                 # home + clear
-    printf '\n%s %s%s%s\n' "$bar" "$C_BOLD" "$prompt" "$C_OFF" >/dev/tty
-    printf '%s %s↑/↓ 이동 · space 선택 · Enter 확정%s\n%s\n' \
-      "$bar" "$C_DIM" "$C_OFF" "$bar" >/dev/tty
-    for i in $(seq 0 $((n - 1))); do
-      if [ "$i" = "$cur" ]; then                     # current row: cyan + pointer
-        if [ "${CHECK_STATE[$i]}" = "1" ]; then
-          printf '%s %s❯ ◉ %s%s\n' "$bar" "$C_CYAN" "${CHECK_ITEMS[$i]}" "$C_OFF" >/dev/tty
-        else
-          printf '%s %s❯ ◯ %s%s\n' "$bar" "$C_CYAN" "${CHECK_ITEMS[$i]}" "$C_OFF" >/dev/tty
-        fi
-      elif [ "${CHECK_STATE[$i]}" = "1" ]; then        # selected, not current
-        printf '%s   %s◉%s %s\n' "$bar" "$C_GREEN" "$C_OFF" "${CHECK_ITEMS[$i]}" >/dev/tty
-      else                                             # unselected, not current
-        printf '%s   %s◯ %s%s\n' "$bar" "$C_DIM" "${CHECK_ITEMS[$i]}" "$C_OFF" >/dev/tty
-      fi
-    done
-    printf '%s\n' "$bar" >/dev/tty
-    IFS= read -rsn1 key </dev/tty || key=''
-    case "$key" in
-      '') break ;;
-      ' ') CHECK_STATE[cur]=$([ "${CHECK_STATE[cur]}" = "1" ] && echo 0 || echo 1) ;;
-      $'\033')
-        # -t must be an INTEGER: macOS system bash 3.2 rejects fractional timeouts
-        # ("invalid timeout specification"), which would break arrow reads. Arrow
-        # keys deliver their 2 trailing bytes immediately, so read returns at once;
-        # the 1s only bounds a lone ESC keypress.
-        IFS= read -rsn2 -t 1 rest </dev/tty || rest=''
-        case "$rest" in
-          '[A'|'OA') cur=$(((cur - 1 + n) % n)) ;;
-          '[B'|'OB') cur=$(((cur + 1) % n)) ;;
-        esac
-        ;;
-      k|K) cur=$(((cur - 1 + n) % n)) ;;
-      j|J) cur=$(((cur + 1) % n)) ;;
-    esac
-  done
-  trap - INT
-  printf '\033[?1049l' >/dev/tty                      # leave alternate screen
-  # Echo the confirmed choices into the normal buffer (alt screen leaves nothing).
-  printf '%s %s%s%s\n' "$bar" "$C_BOLD" "$prompt" "$C_OFF" >/dev/tty
-  for i in $(seq 0 $((n - 1))); do
-    [ "${CHECK_STATE[$i]}" = "1" ] && printf '%s   %s✓%s %s\n' "$bar" "$C_GREEN" "$C_OFF" "${CHECK_ITEMS[$i]}" >/dev/tty
-  done
+# Yes/No prompt → sets VAR to 1/0. Usage: ask_yn VAR "질문?" <y|n default>.
+# Plain line read (no TUI), so it works in any terminal / bash 3.2.
+ask_yn() {
+  local __var="$1" __prompt="$2" __def="${3:-y}" __reply __hint
+  if [ "$__def" = "y" ]; then __hint="[Y/n]"; else __hint="[y/N]"; fi
+  if [ -r /dev/tty ]; then
+    read -r -p "$(printf '%s %s%s%s ' "$__prompt" "$C_DIM" "$__hint" "$C_OFF")" __reply </dev/tty || __reply=''
+  else
+    __reply=''
+  fi
+  __reply="${__reply:-$__def}"
+  case "$__reply" in
+    [yY]*) printf -v "$__var" '%s' 1 ;;
+    *)     printf -v "$__var" '%s' 0 ;;
+  esac
 }
 
 ANALYTICS_READONLY_SCOPE="https://www.googleapis.com/auth/analytics.readonly"
@@ -156,35 +110,30 @@ fi
 
 # --- target selection ---------------------------------------------------------
 # Where to install the MCP server(s): Claude Desktop, the Claude Code CLI, or both.
+# Asked one line at a time (y/N); GA_MCP_TARGETS pins it non-interactively.
 TARGET_DESKTOP=0
 TARGET_CLI=0
+CLAUDE_BIN="$(command -v claude || true)"
 if [ -n "${GA_MCP_TARGETS:-}" ]; then
   case ",$GA_MCP_TARGETS," in *,desktop,*) TARGET_DESKTOP=1 ;; esac
   case ",$GA_MCP_TARGETS," in *,cli,*) TARGET_CLI=1 ;; esac
 elif [ -r /dev/tty ]; then
-  echo ""
-  CHECK_ITEMS=("Claude Desktop" "Claude Code CLI")
-  CHECK_STATE=(1 0)
-  choose_checkbox "설치할 대상을 선택하세요:"
-  TARGET_DESKTOP="${CHECK_STATE[0]}"
-  TARGET_CLI="${CHECK_STATE[1]}"
+  step "설치할 대상"
+  ask_yn TARGET_DESKTOP "Claude Desktop에 설치할까요?" y
+  if [ -n "$CLAUDE_BIN" ]; then
+    ask_yn TARGET_CLI "Claude Code CLI에 설치할까요?" y
+  else
+    warn "'claude' CLI가 없어 Claude Code CLI는 건너뜁니다 (https://claude.ai/download)."
+  fi
 else
   TARGET_DESKTOP=1
 fi
-if [ "$TARGET_DESKTOP" = "0" ] && [ "$TARGET_CLI" = "0" ]; then
-  err "설치 대상이 선택되지 않았습니다."
-  exit 1
-fi
 
 # Claude Code CLI needs the `claude` binary. Skip that target if it's missing.
-CLAUDE_BIN=""
-if [ "$TARGET_CLI" = "1" ]; then
-  CLAUDE_BIN="$(command -v claude || true)"
-  if [ -z "$CLAUDE_BIN" ]; then
-    warn "'claude' CLI를 찾을 수 없어 Claude Code CLI 설정을 건너뜁니다."
-    warn "설치: https://claude.ai/download  또는  npm i -g @anthropic-ai/claude-code"
-    TARGET_CLI=0
-  fi
+if [ "$TARGET_CLI" = "1" ] && [ -z "$CLAUDE_BIN" ]; then
+  warn "'claude' CLI를 찾을 수 없어 Claude Code CLI 설정을 건너뜁니다."
+  warn "설치: https://claude.ai/download  또는  npm i -g @anthropic-ai/claude-code"
+  TARGET_CLI=0
 fi
 if [ "$TARGET_DESKTOP" = "0" ] && [ "$TARGET_CLI" = "0" ]; then
   err "설정할 대상이 없습니다."
@@ -204,18 +153,13 @@ if [ -n "${GA_MCP_SERVERS:-}" ]; then
   case ",$GA_MCP_SERVERS," in *,ads,*) WITH_ADS=1 ;; esac
   case ",$GA_MCP_SERVERS," in *,gtm,*) WITH_GTM=1 ;; esac
 elif [ -r /dev/tty ]; then
-  # GA on by default; Ads/GTM pre-checked if their env flag is set.
-  ads_def=0; gtm_def=0
-  [ "${GA_MCP_WITH_ADS:-}" = "1" ] && ads_def=1
-  [ "${GA_MCP_WITH_GTM:-}" = "1" ] && gtm_def=1
-  echo ""
-  CHECK_ITEMS=("Google Analytics" "Google Analytics Admin (data streams · change history)" "Google Ads" "Google Tag Manager")
-  CHECK_STATE=(1 0 "$ads_def" "$gtm_def")
-  choose_checkbox "설치할 MCP 서버를 선택하세요:"
-  WITH_GA="${CHECK_STATE[0]}"
-  WITH_GA_ADMIN="${CHECK_STATE[1]}"
-  WITH_ADS="${CHECK_STATE[2]}"
-  WITH_GTM="${CHECK_STATE[3]}"
+  # Asked one line at a time (y/N), all defaulting to yes. Ads asks for a
+  # developer token below and skips itself if none is given.
+  step "설치할 MCP 서버 (필요 없는 건 n)"
+  ask_yn WITH_GA       "Google Analytics (리포팅)?" y
+  ask_yn WITH_GA_ADMIN "Google Analytics Admin (데이터 스트림·변경기록)?" y
+  ask_yn WITH_ADS      "Google Ads (개발자 토큰 필요)?" y
+  ask_yn WITH_GTM      "Google Tag Manager?" y
 else
   # Non-interactive without GA_MCP_SERVERS: GA on, others by their env flag.
   WITH_GA=1
