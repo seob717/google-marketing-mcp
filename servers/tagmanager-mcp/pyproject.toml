@@ -9,7 +9,8 @@ readme = "README.md"
 dependencies = [
     "google-auth~=2.40",
     "google-api-python-client>=2.100.0",
-    "mcp>=1.24.0",
+    # mcp 2.0 renamed Tool.inputSchema to input_schema; google-adk pins <2 too.
+    "mcp>=1.24.0,<2",
     "google-adk>=1.29.0",
 ]
 keywords = ["google tag manager", "gtm", "mcp", "tag manager"]
