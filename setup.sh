@@ -253,20 +253,35 @@ if ! CLOUDSDK_CORE_DISABLE_PROMPTS=1 "$GCLOUD" version >/dev/null 2>&1; then
 fi
 
 # --- 3. MCP servers (via uv) ---------------------------------------------------
+# uv의 출력은 로그에 모아두고, 설치가 실제로 실패했을 때만 보여준다.
+# (조용히 삼키면 왜 실패했는지 알 수 없다.)
+INSTALL_LOG="/tmp/ga-mcp-install.log"
+: >"$INSTALL_LOG"
+
+uv_install() {
+  printf '\n$ %s\n' "$*" >>"$INSTALL_LOG"
+  "$@" >>"$INSTALL_LOG" 2>&1
+}
+
+install_failed() {
+  err "$1 실행 파일을 찾을 수 없습니다."
+  err "설치 로그 마지막 20줄 (전체: $INSTALL_LOG):"
+  tail -20 "$INSTALL_LOG" | sed 's/^/    /' >&2
+  exit 1
+}
+
 step "3/6 · MCP 서버 설치"
 MCP_BIN=""
 if [ "$WITH_GA" = "1" ]; then
   info "analytics-mcp 설치/업데이트 중... (공식 PyPI)"
-  "$UV" tool install "$GA_PACKAGE" --quiet 2>/dev/null \
-    || "$UV" tool upgrade "$GA_PACKAGE" --quiet 2>/dev/null || true
+  uv_install "$UV" tool install "$GA_PACKAGE" --quiet \
+    || uv_install "$UV" tool upgrade "$GA_PACKAGE" --quiet || true
   MCP_BIN="$HOME/.local/bin/analytics-mcp"
   if [ ! -x "$MCP_BIN" ]; then
     MCP_BIN="$(command -v analytics-mcp 2>/dev/null || true)"
   fi
   if [ -z "$MCP_BIN" ] || [ ! -x "$MCP_BIN" ]; then
-    err "analytics-mcp 실행 파일을 찾을 수 없습니다."
-    err "'$UV tool install $GA_PACKAGE' 를 직접 실행해 오류를 확인하세요."
-    exit 1
+    install_failed "analytics-mcp"
   fi
   ok "Analytics 서버 설치 완료 ($MCP_BIN)"
 fi
@@ -274,15 +289,13 @@ fi
 GA_ADMIN_MCP_BIN=""
 if [ "$WITH_GA_ADMIN" = "1" ]; then
   info "ga4-admin-mcp 설치/업데이트 중... (이 레포에서)"
-  "$UV" tool install --force "$GA_ADMIN_INSTALL_SOURCE" --quiet 2>/dev/null || true
+  uv_install "$UV" tool install --force "$GA_ADMIN_INSTALL_SOURCE" --quiet || true
   GA_ADMIN_MCP_BIN="$HOME/.local/bin/ga4-admin-mcp"
   if [ ! -x "$GA_ADMIN_MCP_BIN" ]; then
     GA_ADMIN_MCP_BIN="$(command -v ga4-admin-mcp 2>/dev/null || true)"
   fi
   if [ -z "$GA_ADMIN_MCP_BIN" ] || [ ! -x "$GA_ADMIN_MCP_BIN" ]; then
-    err "ga4-admin-mcp 실행 파일을 찾을 수 없습니다."
-    err "'$UV tool install --force \"$GA_ADMIN_INSTALL_SOURCE\"' 를 직접 실행해 오류를 확인하세요."
-    exit 1
+    install_failed "ga4-admin-mcp"
   fi
   ok "GA Admin 서버 설치 완료 ($GA_ADMIN_MCP_BIN)"
 fi
@@ -290,16 +303,14 @@ fi
 ADS_MCP_BIN=""
 if [ "$WITH_ADS" = "1" ]; then
   info "google-ads-mcp 설치/업데이트 중..."
-  "$UV" tool install "$ADS_PACKAGE" --quiet 2>/dev/null \
-    || "$UV" tool upgrade "$ADS_PACKAGE" --quiet 2>/dev/null || true
+  uv_install "$UV" tool install "$ADS_PACKAGE" --quiet \
+    || uv_install "$UV" tool upgrade "$ADS_PACKAGE" --quiet || true
   ADS_MCP_BIN="$HOME/.local/bin/google-ads-mcp"
   if [ ! -x "$ADS_MCP_BIN" ]; then
     ADS_MCP_BIN="$(command -v google-ads-mcp 2>/dev/null || true)"
   fi
   if [ -z "$ADS_MCP_BIN" ] || [ ! -x "$ADS_MCP_BIN" ]; then
-    err "google-ads-mcp 실행 파일을 찾을 수 없습니다."
-    err "'$UV tool install google-ads-mcp' 를 직접 실행해 오류를 확인하세요."
-    exit 1
+    install_failed "google-ads-mcp"
   fi
   ok "Ads 서버 설치 완료 ($ADS_MCP_BIN)"
 fi
@@ -307,15 +318,13 @@ fi
 GTM_MCP_BIN=""
 if [ "$WITH_GTM" = "1" ]; then
   info "tagmanager-mcp 설치/업데이트 중... (이 포크의 git 소스에서)"
-  "$UV" tool install --force "$GTM_INSTALL_SOURCE" --quiet 2>/dev/null || true
+  uv_install "$UV" tool install --force "$GTM_INSTALL_SOURCE" --quiet || true
   GTM_MCP_BIN="$HOME/.local/bin/tagmanager-mcp"
   if [ ! -x "$GTM_MCP_BIN" ]; then
     GTM_MCP_BIN="$(command -v tagmanager-mcp 2>/dev/null || true)"
   fi
   if [ -z "$GTM_MCP_BIN" ] || [ ! -x "$GTM_MCP_BIN" ]; then
-    err "tagmanager-mcp 실행 파일을 찾을 수 없습니다."
-    err "'$UV tool install --force \"$GTM_INSTALL_SOURCE\"' 를 직접 실행해 오류를 확인하세요."
-    exit 1
+    install_failed "tagmanager-mcp"
   fi
   ok "Tag Manager 서버 설치 완료 ($GTM_MCP_BIN)"
 fi
