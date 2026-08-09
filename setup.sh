@@ -79,157 +79,6 @@ ask_yn() {
   esac
 }
 
-# Checkbox picker (↑↓ / space / Enter), drawn by Python curses so it uses this
-# terminal's own terminfo instead of hand-written ANSI — the earlier bash TUI
-# broke wherever cursor-up was ignored. Returns 1 when curses can't drive the
-# terminal so every caller keeps its plain y/N path.
-PICKER_PY="$(mktemp -t gmm-picker)"
-trap 'rm -f "$PICKER_PY" "${SERVERS_JSON:-}"' EXIT
-cat > "$PICKER_PY" <<'PY'
-"""Checkbox picker for setup.sh. Exits 2 when curses can't drive this terminal
-(caller falls back to y/N prompts) and 130 when the user cancels."""
-
-import curses
-import sys
-import unicodedata
-
-
-def _w(text):
-    """Display width, counting East Asian wide characters as two columns."""
-    return sum(2 if unicodedata.east_asian_width(c) in "WFA" else 1 for c in text)
-
-
-def _clip(text, width):
-    out, used = "", 0
-    for c in text:
-        cw = 2 if unicodedata.east_asian_width(c) in "WFA" else 1
-        if used + cw > width:
-            break
-        out += c
-        used += cw
-    return out
-
-
-def _pad(text, width):
-    return text + " " * max(0, width - _w(text))
-
-
-def _draw(scr, title, items, state, idx):
-    scr.erase()
-    height, width = scr.getmaxyx()
-    avail = max(1, width - 1)
-    label_w = max(_w(i["label"]) for i in items)
-
-    scr.addstr(0, 0, _clip(title, avail), curses.A_BOLD)
-    scr.addstr(1, 0, _clip("  ↑↓ 이동 · space 선택 · a 전체 · Enter 확정 · q 취소", avail))
-
-    for n, item in enumerate(items):
-        row = 3 + n
-        if row >= height:
-            break
-        mark = "[x]" if state[n] else "[ ]"
-        pointer = ">" if n == idx else " "
-        line = "%s %s  %s   %s" % (pointer, mark, _pad(item["label"], label_w), item["desc"])
-        scr.addstr(row, 0, _clip(line, avail), curses.A_BOLD if n == idx else curses.A_NORMAL)
-
-    row = 4 + len(items)
-    if row < height:
-        chosen = sum(state)
-        note = "  %d개 선택됨" % chosen if chosen else "  하나도 선택하지 않았습니다 — 최소 1개가 필요합니다"
-        scr.addstr(row, 0, _clip(note, avail))
-    scr.refresh()
-
-
-def _run(scr, title, items, state):
-    curses.curs_set(0)
-    scr.keypad(True)
-    height, width = scr.getmaxyx()
-    if height < len(items) + 6 or width < 40:
-        raise RuntimeError("terminal too small for the picker")
-    idx = 0
-    while True:
-        _draw(scr, title, items, state, idx)
-        key = scr.getch()
-        if key == -1:
-            # stdin closed underneath us; bail instead of spinning forever.
-            sys.exit(130)
-        if key in (curses.KEY_UP, ord("k")):
-            idx = (idx - 1) % len(items)
-        elif key in (curses.KEY_DOWN, ord("j")):
-            idx = (idx + 1) % len(items)
-        elif key == ord(" "):
-            state[idx] = not state[idx]
-        elif key == ord("a"):
-            fill = not all(state)
-            state[:] = [fill] * len(items)
-        elif ord("1") <= key <= ord("9") and key - ord("1") < len(items):
-            idx = key - ord("1")
-            state[idx] = not state[idx]
-        elif key in (curses.KEY_ENTER, 10, 13):
-            if any(state):
-                return state
-        elif key in (ord("q"), 27):
-            sys.exit(130)
-
-
-def main(argv):
-    out_path, title, specs = argv[1], argv[2], argv[3:]
-    items, state = [], []
-    for spec in specs:
-        key, label, desc, default = spec.split("\t")
-        items.append({"key": key, "label": label, "desc": desc})
-        state.append(default == "1")
-    if not items:
-        return 2
-    # curses needs a real terminal on both ends; setup.sh redirects them to /dev/tty.
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        return 2
-    try:
-        curses.wrapper(_run, title, items, state)
-    except SystemExit:
-        raise
-    except Exception:
-        # Unknown TERM, no terminfo entry, window too small — let bash fall back.
-        return 2
-    with open(out_path, "w") as f:
-        f.write(",".join(i["key"] for i, on in zip(items, state) if on))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
-PY
-
-# Usage: pick_multi VAR "제목" "key:label:desc:1" ...  → VAR="key1,key2"
-pick_multi() {
-  local __var="$1" __title="$2" __out __spec __key __rest __label __desc __def __rc=0
-  local __args=()
-  shift 2
-  [ -r /dev/tty ] || return 1
-  [ -n "${UV:-}" ] && [ -x "$UV" ] || return 1
-  for __spec in "$@"; do
-    __key="${__spec%%:*}"; __rest="${__spec#*:}"
-    __label="${__rest%%:*}"; __rest="${__rest#*:}"
-    __desc="${__rest%%:*}"; __def="${__rest##*:}"
-    __args+=("$(printf '%s\t%s\t%s\t%s' "$__key" "$__label" "$__desc" "$__def")")
-  done
-  __out="$(mktemp -t gmm-pick)"
-  "$UV" run --no-project python "$PICKER_PY" "$__out" "$__title" "${__args[@]}" \
-    </dev/tty >/dev/tty 2>/dev/null || __rc=$?
-  if [ "$__rc" -eq 130 ]; then
-    rm -f "$__out"
-    err "설치를 취소했습니다."
-    exit 130
-  fi
-  if [ "$__rc" -ne 0 ]; then
-    rm -f "$__out"
-    return 1
-  fi
-  printf -v "$__var" '%s' "$(cat "$__out")"
-  rm -f "$__out"
-  return 0
-}
-
 ANALYTICS_READONLY_SCOPE="https://www.googleapis.com/auth/analytics.readonly"
 ANALYTICS_EDIT_SCOPE="https://www.googleapis.com/auth/analytics.edit"
 ADWORDS_SCOPE="https://www.googleapis.com/auth/adwords"
@@ -259,20 +108,6 @@ if [ "$(uname)" != "Darwin" ]; then
   exit 1
 fi
 
-# --- 1. uv (also provides Python) --------------------------------------------
-step "1/6 · 실행 도구 준비 (uv)"
-if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
-  info "uv 설치 중... (관리자 암호 불필요)"
-  curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
-fi
-UV="$(command -v uv 2>/dev/null || true)"
-[ -n "$UV" ] || UV="$HOME/.local/bin/uv"
-if [ ! -x "$UV" ]; then
-  err "uv 설치에 실패했습니다. 인터넷 연결을 확인하고 다시 실행하세요."
-  exit 1
-fi
-ok "uv 준비 완료 ($UV)"
-
 # --- target selection ---------------------------------------------------------
 # Where to install the MCP server(s): Claude Desktop, the Claude Code CLI, or both.
 # Asked one line at a time (y/N); GA_MCP_TARGETS pins it non-interactively.
@@ -283,21 +118,12 @@ if [ -n "${GA_MCP_TARGETS:-}" ]; then
   case ",$GA_MCP_TARGETS," in *,desktop,*) TARGET_DESKTOP=1 ;; esac
   case ",$GA_MCP_TARGETS," in *,cli,*) TARGET_CLI=1 ;; esac
 elif [ -r /dev/tty ]; then
-  TARGET_SPECS=("desktop:Claude Desktop:데스크톱 앱:1")
+  step "설치할 대상"
+  ask_yn TARGET_DESKTOP "Claude Desktop에 설치할까요?" y
   if [ -n "$CLAUDE_BIN" ]; then
-    TARGET_SPECS+=("cli:Claude Code CLI:터미널의 claude 명령:1")
+    ask_yn TARGET_CLI "Claude Code CLI에 설치할까요?" y
   else
     warn "'claude' CLI가 없어 Claude Code CLI는 건너뜁니다 (https://claude.ai/download)."
-  fi
-  if pick_multi PICKED_TARGETS "설치할 대상" "${TARGET_SPECS[@]}"; then
-    case ",$PICKED_TARGETS," in *,desktop,*) TARGET_DESKTOP=1 ;; esac
-    case ",$PICKED_TARGETS," in *,cli,*) TARGET_CLI=1 ;; esac
-  else
-    step "설치할 대상"
-    ask_yn TARGET_DESKTOP "Claude Desktop에 설치할까요?" y
-    if [ -n "$CLAUDE_BIN" ]; then
-      ask_yn TARGET_CLI "Claude Code CLI에 설치할까요?" y
-    fi
   fi
 else
   TARGET_DESKTOP=1
@@ -327,25 +153,13 @@ if [ -n "${GA_MCP_SERVERS:-}" ]; then
   case ",$GA_MCP_SERVERS," in *,ads,*) WITH_ADS=1 ;; esac
   case ",$GA_MCP_SERVERS," in *,gtm,*) WITH_GTM=1 ;; esac
 elif [ -r /dev/tty ]; then
-  # Checkbox picker, everything on by default; falls back to one y/N line each
-  # when curses is unavailable. Ads asks for a developer token below and skips
-  # itself if none is given.
-  if pick_multi PICKED_SERVERS "설치할 MCP 서버" \
-    "ga:Google Analytics:리포팅·실시간 리포트:1" \
-    "ga-admin:Google Analytics Admin:데이터 스트림·변경기록:1" \
-    "ads:Google Ads:광고 리포팅 (개발자 토큰 필요):1" \
-    "gtm:Google Tag Manager:태그·트리거·버전 게시:1"; then
-    case ",$PICKED_SERVERS," in *,ga,*) WITH_GA=1 ;; esac
-    case ",$PICKED_SERVERS," in *,ga-admin,*) WITH_GA_ADMIN=1 ;; esac
-    case ",$PICKED_SERVERS," in *,ads,*) WITH_ADS=1 ;; esac
-    case ",$PICKED_SERVERS," in *,gtm,*) WITH_GTM=1 ;; esac
-  else
-    step "설치할 MCP 서버 (필요 없는 건 n)"
-    ask_yn WITH_GA       "Google Analytics (리포팅)?" y
-    ask_yn WITH_GA_ADMIN "Google Analytics Admin (데이터 스트림·변경기록)?" y
-    ask_yn WITH_ADS      "Google Ads (개발자 토큰 필요)?" y
-    ask_yn WITH_GTM      "Google Tag Manager?" y
-  fi
+  # Asked one line at a time (y/N), all defaulting to yes. Ads asks for a
+  # developer token below and skips itself if none is given.
+  step "설치할 MCP 서버 (필요 없는 건 n)"
+  ask_yn WITH_GA       "Google Analytics (리포팅)?" y
+  ask_yn WITH_GA_ADMIN "Google Analytics Admin (데이터 스트림·변경기록)?" y
+  ask_yn WITH_ADS      "Google Ads (개발자 토큰 필요)?" y
+  ask_yn WITH_GTM      "Google Tag Manager?" y
 else
   # Non-interactive without GA_MCP_SERVERS: GA on, others by their env flag.
   WITH_GA=1
@@ -394,6 +208,20 @@ if [ "$WITH_GA" = "0" ] && [ "$WITH_GA_ADMIN" = "0" ] && [ "$WITH_ADS" = "0" ] &
   err "설치할 서버가 없습니다."
   exit 1
 fi
+
+# --- 1. uv (also provides Python) --------------------------------------------
+step "1/6 · 실행 도구 준비 (uv)"
+if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
+  info "uv 설치 중... (관리자 암호 불필요)"
+  curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
+fi
+UV="$(command -v uv 2>/dev/null || true)"
+[ -n "$UV" ] || UV="$HOME/.local/bin/uv"
+if [ ! -x "$UV" ]; then
+  err "uv 설치에 실패했습니다. 인터넷 연결을 확인하고 다시 실행하세요."
+  exit 1
+fi
+ok "uv 준비 완료 ($UV)"
 
 # --- 2. Google Cloud SDK ------------------------------------------------------
 step "2/6 · Google Cloud SDK 준비"
@@ -584,6 +412,7 @@ ok "인증 설정 완료"
 
 # Build the server definitions once; every selected client reuses them.
 SERVERS_JSON="$(mktemp)"
+trap 'rm -f "$SERVERS_JSON"' EXIT
 WITH_GA="$WITH_GA" MCP_BIN="$MCP_BIN" ADC_PATH="$ADC_PATH" PROJECT="$PROJECT" \
 WITH_GA_ADMIN="$WITH_GA_ADMIN" GA_ADMIN_MCP_BIN="$GA_ADMIN_MCP_BIN" \
 WITH_ADS="$WITH_ADS" ADS_MCP_BIN="$ADS_MCP_BIN" ADS_DEV_TOKEN="$ADS_DEV_TOKEN" \
