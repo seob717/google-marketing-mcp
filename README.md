@@ -10,10 +10,10 @@ the clients you choose.
 
 | Server | Package | Source | Capability |
 |---|---|---|---|
-| Google Analytics | `analytics-mcp` | official PyPI | reporting (Data API) |
-| Google Analytics Admin | `ga4-admin-mcp` | `servers/ga4-admin-mcp` (this repo) | read-only admin: data streams, `getGlobalSiteTag`, change history |
-| Google Ads | `google-ads-mcp` | official PyPI | read-only ads reporting |
-| Google Tag Manager | `tagmanager-mcp` | `servers/tagmanager-mcp` (this repo) | **read + write** (tags/triggers/variables, versions, publish) |
+| Google Analytics | `analytics-mcp` | official PyPI | reporting (Data API): `run_report`, `run_realtime_report`, `run_funnel_report`, account/property lookups |
+| Google Analytics Admin | `ga4-admin-mcp` | `servers/ga4-admin-mcp` (this repo) | read-only admin: `list_data_streams`, `get_global_site_tag`, `search_change_history_events` |
+| Google Ads | `google-ads-mcp` | official PyPI | read-only ads reporting (GAQL `search`, accessible customers) |
+| Google Tag Manager | `tagmanager-mcp` | `servers/tagmanager-mcp` (this repo) | **read + write**: tags/triggers/variables, versions, publish |
 
 **Design:** the official servers (GA, Ads) install straight from PyPI, so they
 track their own upstream automatically. Our own additions — GA Admin and GTM —
@@ -21,6 +21,16 @@ live here under `servers/`. No fork to maintain. GA Admin is separate from GA
 reporting because its change-history tool needs the broader `analytics.edit`
 scope; GTM's destructive ops (delete/publish) stay gated behind
 `GTM_MCP_ALLOW_DESTRUCTIVE=1`.
+
+## Requirements
+
+- **macOS** — the installer is macOS-only and exits on other platforms.
+- **Claude Desktop** and/or the **Claude Code CLI** (`claude`). The installer
+  skips the CLI target automatically when the binary isn't on your `PATH`.
+- A **Google account with access to the properties you want to read**, and a
+  Google Cloud project (the installer can create one for you).
+- No Homebrew, no manual Python — `uv` and the Google Cloud SDK are installed
+  for you if missing.
 
 ## Quick start (macOS)
 
@@ -36,22 +46,101 @@ The script:
    Analytics** / **Google Analytics Admin** / **Google Ads** / **Google Tag
    Manager** (all default to yes; answer `n` to skip any). Pin the whole set
    with `GA_MCP_SERVERS=ga,ga-admin,ads,gtm`.
-3. Installs the servers via `uv`, installs the Google Cloud SDK if missing.
-4. Signs you in once (ADC) with the union of scopes for whichever servers you chose.
-5. Enables the required APIs and registers the servers into your clients.
+3. For **Ads**, asks for a developer token (and an MCC customer ID if you go
+   through a manager account). No token → Ads is skipped.
+4. For **GTM**, asks whether to allow destructive writes (delete / publish).
+   Default is no.
+5. Installs the servers via `uv`, installs the Google Cloud SDK if missing.
+6. Signs you in once (ADC) with the union of scopes for whichever servers you chose.
+7. Enables the required APIs and registers the servers into your clients.
 
-Non-interactive example (CLI, all three):
+Re-running the script is safe: it upgrades what's installed, backs up your
+Claude Desktop config before touching it, and re-registers CLI entries in place.
+The only repeated cost is the ADC browser sign-in.
+
+Non-interactive example (CLI only, all four servers):
 
 ```shell
-GA_MCP_TARGETS=cli GA_MCP_WITH_ADS=1 GA_MCP_ADS_DEV_TOKEN=xxx GA_MCP_WITH_GTM=1 bash /tmp/gmm-setup.sh
+GA_MCP_TARGETS=cli \
+GA_MCP_SERVERS=ga,ga-admin,ads,gtm \
+GA_MCP_PROJECT=my-gcp-project \
+GA_MCP_ADS_DEV_TOKEN=xxx \
+GTM_MCP_ALLOW_DESTRUCTIVE=1 \
+bash /tmp/gmm-setup.sh
 ```
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| `GA_MCP_TARGETS` | Comma list of `desktop`, `cli`. Skips the client prompt. |
+| `GA_MCP_SERVERS` | Comma list of `ga`, `ga-admin`, `ads`, `gtm`. Skips the server prompt. |
+| `GA_MCP_PROJECT` | Google Cloud project ID. Skips the project prompt. |
+| `GA_MCP_ADS_DEV_TOKEN` | Google Ads developer token ([API Center](https://ads.google.com/aw/apicenter)). |
+| `GA_MCP_ADS_LOGIN_CUSTOMER_ID` | MCC (manager) customer ID; dashes are stripped. |
+| `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*` and `publish_version`. |
+| `GA_PACKAGE` / `ADS_PACKAGE` | Override the PyPI package installed for GA / Ads. |
+| `GA_ADMIN_INSTALL_SOURCE` / `GTM_INSTALL_SOURCE` | Override the install source for the two servers in this repo (e.g. a local path while developing). |
+
+`GA_MCP_WITH_ADS=1` / `GA_MCP_WITH_GTM=1` are a fallback for fully
+non-interactive runs (no TTY) where `GA_MCP_SERVERS` isn't set — there GA is on
+by default and these two opt the extras in. Prefer `GA_MCP_SERVERS`.
 
 ### Scopes note
 
 Most reads work with `analytics.readonly`. Selecting **Google Analytics Admin**
 adds the broader `analytics.edit` scope (its change-history tool requires it).
-Selecting **Google Ads** adds the `adwords` scope. The installer requests the
-union in a single ADC login.
+Selecting **Google Ads** adds the `adwords` scope, and **GTM** adds the
+`tagmanager.*` scopes. The installer requests the union in a single ADC login.
+
+⚠️ ADC is a **single credentials file**. Any later `gcloud auth
+application-default login` — including another installer that requests fewer
+scopes — overwrites it and can break the servers you already set up. If that
+happens, just re-run `setup.sh`.
+
+## After installing
+
+**Verify**
+
+- Claude Desktop: quit it completely (⌘Q) and reopen, then ask
+  `내 Google Analytics 속성 목록을 보여줘`.
+- Claude Code CLI: `claude mcp list`.
+
+**Update**
+
+Re-running `setup.sh` is the reliable path — it upgrades the PyPI servers and
+reinstalls the git-sourced ones. Manually:
+
+```shell
+uv tool upgrade analytics-mcp google-ads-mcp
+uv tool install --force "git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/ga4-admin-mcp"
+uv tool install --force "git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/tagmanager-mcp"
+```
+
+**Uninstall**
+
+```shell
+uv tool uninstall analytics-mcp ga4-admin-mcp google-ads-mcp tagmanager-mcp
+claude mcp remove -s user analytics-mcp   # repeat per server, CLI only
+```
+
+For Claude Desktop, delete the entries under `mcpServers` in
+`~/Library/Application Support/Claude/claude_desktop_config.json`, or restore
+one of the `claude_desktop_config.json.bak.*` backups the installer left.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Servers don't show up in Claude Desktop | Quit with ⌘Q (closing the window isn't enough) and reopen. |
+| A server binary is missing after install | Read `/tmp/ga-mcp-install.log` — the installer writes every `uv tool install` there. |
+| `API 활성화 권한이 없습니다` warning | You're not owner/editor on the project. Ask an admin to enable the listed APIs once; the step passes automatically afterwards. |
+| `search_change_history_events` returns a permission error | Its `analytics.edit` scope is missing from ADC. Re-run `setup.sh` with GA Admin selected. |
+| gcloud fails to start | The installer pins a `uv`-managed Python 3.12 via `CLOUDSDK_PYTHON` when the system `python3` is too old; re-run it if you hit this outside the script. |
+| Ads was silently skipped | No developer token was given. Get one at the [API Center](https://ads.google.com/aw/apicenter) and re-run. |
+| GTM delete/publish refuses to run | Expected — add `GTM_MCP_ALLOW_DESTRUCTIVE=1` to the `tagmanager-mcp` env, or re-run and answer `y`. |
+
+**Note:** the Ads developer token is stored in plain text in the client config.
 
 ## Layout
 
