@@ -275,11 +275,14 @@ install_failed() {
 }
 
 step "3/6 · MCP 서버 설치"
+# The PyPI servers don't pin `mcp`, and mcp 2.0 removed `mcp.server.fastmcp`
+# (the import they use) — an unconstrained install starts and immediately dies
+# with CONNECTION_CLOSED. `--with "mcp<2"` pins it; `--force` makes the pin
+# apply to existing installs too and doubles as the upgrade path.
 MCP_BIN=""
 if [ "$WITH_GA" = "1" ]; then
   info "analytics-mcp 설치/업데이트 중... (공식 PyPI)"
-  uv_install "$UV" tool install "$GA_PACKAGE" --quiet \
-    || uv_install "$UV" tool upgrade "$GA_PACKAGE" --quiet || true
+  uv_install "$UV" tool install --force --with "mcp<2" "$GA_PACKAGE" --quiet || true
   MCP_BIN="$HOME/.local/bin/analytics-mcp"
   if [ ! -x "$MCP_BIN" ]; then
     MCP_BIN="$(command -v analytics-mcp 2>/dev/null || true)"
@@ -307,8 +310,7 @@ fi
 ADS_MCP_BIN=""
 if [ "$WITH_ADS" = "1" ]; then
   info "google-ads-mcp 설치/업데이트 중..."
-  uv_install "$UV" tool install "$ADS_PACKAGE" --quiet \
-    || uv_install "$UV" tool upgrade "$ADS_PACKAGE" --quiet || true
+  uv_install "$UV" tool install --force --with "mcp<2" "$ADS_PACKAGE" --quiet || true
   ADS_MCP_BIN="$HOME/.local/bin/google-ads-mcp"
   if [ ! -x "$ADS_MCP_BIN" ]; then
     ADS_MCP_BIN="$(command -v google-ads-mcp 2>/dev/null || true)"

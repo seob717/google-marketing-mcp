@@ -113,7 +113,8 @@ Re-running `setup.sh` is the reliable path — it upgrades the PyPI servers and
 reinstalls the git-sourced ones. Manually:
 
 ```shell
-uv tool upgrade analytics-mcp google-ads-mcp
+uv tool install --force --with "mcp<2" analytics-mcp
+uv tool install --force --with "mcp<2" google-ads-mcp
 uv tool install --force "git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/ga4-admin-mcp"
 uv tool install --force "git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/tagmanager-mcp"
 ```
@@ -135,6 +136,7 @@ one of the `claude_desktop_config.json.bak.*` backups the installer left.
 |---|---|
 | Servers don't show up in Claude Desktop | Quit with ⌘Q (closing the window isn't enough) and reopen. |
 | A server binary is missing after install | Read `/tmp/ga-mcp-install.log` — the installer writes every `uv tool install` there. |
+| `Failed to reconnect to google-ads-mcp: CONNECTION_CLOSED` (or the same for `analytics-mcp`) | `mcp` 2.0 got installed; it removed `mcp.server.fastmcp`, so the server dies on import. Re-run `setup.sh`, or `uv tool install --force --with "mcp<2" google-ads-mcp`. Running the binary by hand shows the `ModuleNotFoundError`. |
 | `API 활성화 권한이 없습니다` warning | You're not owner/editor on the project. Ask an admin to enable the listed APIs once; the step passes automatically afterwards. |
 | `search_change_history_events` returns a permission error | Its `analytics.edit` scope is missing from ADC. Re-run `setup.sh` with GA Admin selected. |
 | GA servers fail with `Could not contact DNS servers` while GTM works on the same host | gRPC DNS issue, not the network — see [GA servers can't resolve DNS](#ga-servers-cant-resolve-dns-grpc) below. |
