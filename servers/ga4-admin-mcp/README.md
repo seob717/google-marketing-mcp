@@ -18,6 +18,14 @@ that the official `analytics-mcp` (Data API / reporting) can't see:
 - **Change history requires the broader `analytics.edit` scope** (Admin API
   requirement — even though this server only reads).
 
+## Transport
+
+The client uses gRPC by default. On hosts where gRPC's built-in DNS resolver
+can't reach port 53 (`Could not contact DNS servers`), set
+`GRPC_DNS_RESOLVER=native` in the server env first; if that isn't enough,
+`GA4_ADMIN_MCP_TRANSPORT=rest` switches the Admin API client to REST/HTTPS.
+See the [root troubleshooting guide](../../README.md#ga-servers-cant-resolve-dns-grpc).
+
 ## Not included
 
 **Connected site tags** — the GA4 Admin API exposes no method for them, so they

@@ -15,6 +15,7 @@
 """Client initialization for the Google Analytics Admin API (alpha)."""
 
 import contextlib
+import os
 import subprocess
 import threading
 from importlib import metadata
@@ -41,6 +42,15 @@ def _version() -> str:
 
 
 _CLIENT_INFO = ClientInfo(user_agent=f"ga4-admin-mcp/{_version()}")
+
+# Transport selection. gRPC is the library default and the fastest path, but
+# its built-in DNS resolver (c-ares) bypasses the OS resolver and needs raw
+# UDP/53 — blocked on many sandboxed/proxied hosts ("Could not contact DNS
+# servers"). The first fix is GRPC_DNS_RESOLVER=native in the server env
+# (setup.sh sets it); GA4_ADMIN_MCP_TRANSPORT=rest is the fallback that
+# avoids gRPC entirely and goes over plain HTTPS like the GTM server does.
+_TRANSPORT_ENV = "GA4_ADMIN_MCP_TRANSPORT"
+_VALID_TRANSPORTS = ("grpc", "rest")
 _lock = threading.Lock()
 _CREDENTIALS = None
 
@@ -67,9 +77,24 @@ def _get_credentials():
     return _CREDENTIALS
 
 
+def _transport() -> str | None:
+    """Returns the transport from GA4_ADMIN_MCP_TRANSPORT, or None for default."""
+    value = os.environ.get(_TRANSPORT_ENV, "").strip().lower()
+    if not value:
+        return None
+    if value not in _VALID_TRANSPORTS:
+        raise ValueError(
+            f"{_TRANSPORT_ENV}={value!r} is not supported; "
+            f"use one of {', '.join(_VALID_TRANSPORTS)}."
+        )
+    return value
+
+
 def create_admin_alpha_client() -> admin_v1alpha.AnalyticsAdminServiceClient:
     """Returns the Google Analytics Admin API (alpha) client."""
+    kwargs = {"client_info": _CLIENT_INFO, "credentials": _get_credentials()}
+    transport = _transport()
+    if transport:
+        kwargs["transport"] = transport
     with _lock:
-        return admin_v1alpha.AnalyticsAdminServiceClient(
-            client_info=_CLIENT_INFO, credentials=_get_credentials()
-        )
+        return admin_v1alpha.AnalyticsAdminServiceClient(**kwargs)

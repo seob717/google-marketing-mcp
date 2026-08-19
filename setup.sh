@@ -35,6 +35,10 @@
 #   GA_MCP_WITH_GTM=1 bash setup.sh
 #     # also set up the Google Tag Manager MCP server (read + write)
 #     # (optional: GTM_MCP_ALLOW_DESTRUCTIVE=1 to allow delete/publish)
+#   GA4_ADMIN_MCP_TRANSPORT=rest bash setup.sh
+#     # make ga4-admin-mcp use REST instead of gRPC (fallback for hosts where
+#     # even GRPC_DNS_RESOLVER=native can't reach Google; the GA servers get
+#     # GRPC_DNS_RESOLVER=native by default)
 
 set -euo pipefail
 
@@ -418,29 +422,42 @@ WITH_GA_ADMIN="$WITH_GA_ADMIN" GA_ADMIN_MCP_BIN="$GA_ADMIN_MCP_BIN" \
 WITH_ADS="$WITH_ADS" ADS_MCP_BIN="$ADS_MCP_BIN" ADS_DEV_TOKEN="$ADS_DEV_TOKEN" \
 ADS_LOGIN_CUSTOMER_ID="$ADS_LOGIN_CUSTOMER_ID" \
 WITH_GTM="$WITH_GTM" GTM_MCP_BIN="$GTM_MCP_BIN" GTM_ALLOW_DESTRUCTIVE="$GTM_ALLOW_DESTRUCTIVE" \
+GA_ADMIN_TRANSPORT="${GA4_ADMIN_MCP_TRANSPORT:-}" \
 SERVERS_JSON="$SERVERS_JSON" \
 "$UV" run --no-project python - <<'PY'
 import json, os
 
 servers = {}
+# The two GA servers talk to Google over gRPC. gRPC's built-in resolver
+# (c-ares) sends raw UDP/53 queries instead of using the OS resolver, which
+# sandboxed/proxied hosts block — the symptom is "Could not contact DNS
+# servers" while REST-based servers (e.g. GTM) work fine on the same host.
+# GRPC_DNS_RESOLVER=native makes gRPC use getaddrinfo like everything else.
+# GOOGLE_CLOUD_QUOTA_PROJECT mirrors `set-quota-project` so the user-ADC
+# 403 ("quota project not set") doesn't come back if the ADC file is rewritten.
+grpc_env = {
+    "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
+    "GOOGLE_CLOUD_PROJECT": os.environ["PROJECT"],
+    "GOOGLE_CLOUD_QUOTA_PROJECT": os.environ["PROJECT"],
+    "GRPC_DNS_RESOLVER": "native",
+}
+
 if os.environ.get("WITH_GA") == "1":
     servers["analytics-mcp"] = {
         "command": os.environ["MCP_BIN"],
         "args": [],
-        "env": {
-            "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
-            "GOOGLE_CLOUD_PROJECT": os.environ["PROJECT"],
-        },
+        "env": dict(grpc_env),
     }
 
 if os.environ.get("WITH_GA_ADMIN") == "1":
+    ga_admin_env = dict(grpc_env)
+    if os.environ.get("GA_ADMIN_TRANSPORT"):
+        # Escape hatch: GA4_ADMIN_MCP_TRANSPORT=rest bypasses gRPC entirely.
+        ga_admin_env["GA4_ADMIN_MCP_TRANSPORT"] = os.environ["GA_ADMIN_TRANSPORT"]
     servers["ga4-admin-mcp"] = {
         "command": os.environ["GA_ADMIN_MCP_BIN"],
         "args": [],
-        "env": {
-            "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
-            "GOOGLE_CLOUD_PROJECT": os.environ["PROJECT"],
-        },
+        "env": ga_admin_env,
     }
 
 if os.environ.get("WITH_ADS") == "1":
@@ -461,6 +478,7 @@ if os.environ.get("WITH_GTM") == "1":
     gtm_env = {
         "GOOGLE_APPLICATION_CREDENTIALS": os.environ["ADC_PATH"],
         "GOOGLE_CLOUD_PROJECT": os.environ["PROJECT"],
+        "GOOGLE_CLOUD_QUOTA_PROJECT": os.environ["PROJECT"],
     }
     if os.environ.get("GTM_ALLOW_DESTRUCTIVE") == "1":
         gtm_env["GTM_MCP_ALLOW_DESTRUCTIVE"] = "1"
@@ -553,6 +571,14 @@ if [ "$WITH_GTM" = "1" ]; then
     echo "참고: GTM 삭제·publish 허용됨 (GTM_MCP_ALLOW_DESTRUCTIVE=1)"
   else
     echo "참고: GTM 삭제·publish 비활성 (켜려면 tagmanager-mcp env에 GTM_MCP_ALLOW_DESTRUCTIVE=1 추가)"
+  fi
+fi
+if [ "$WITH_GA" = "1" ] || [ "$WITH_GA_ADMIN" = "1" ]; then
+  echo "참고: GA 서버 env에 GRPC_DNS_RESOLVER=native 적용됨 (프록시/샌드박스의 'Could not contact DNS servers' 방지)."
+  if [ -n "${GA4_ADMIN_MCP_TRANSPORT:-}" ]; then
+    echo "참고: ga4-admin-mcp transport=$GA4_ADMIN_MCP_TRANSPORT"
+  elif [ "$WITH_GA_ADMIN" = "1" ]; then
+    echo "      그래도 DNS 오류가 나면 ga4-admin-mcp env에 GA4_ADMIN_MCP_TRANSPORT=rest 추가."
   fi
 fi
 if [ "$TARGET_DESKTOP" = "1" ]; then

@@ -79,6 +79,7 @@ bash /tmp/gmm-setup.sh
 | `GA_MCP_ADS_DEV_TOKEN` | Google Ads developer token ([API Center](https://ads.google.com/aw/apicenter)). |
 | `GA_MCP_ADS_LOGIN_CUSTOMER_ID` | MCC (manager) customer ID; dashes are stripped. |
 | `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*` and `publish_version`. |
+| `GA4_ADMIN_MCP_TRANSPORT` | `rest` makes `ga4-admin-mcp` call Google over HTTPS instead of gRPC (see [Troubleshooting](#troubleshooting)). Default: gRPC. |
 | `GA_PACKAGE` / `ADS_PACKAGE` | Override the PyPI package installed for GA / Ads. |
 | `GA_ADMIN_INSTALL_SOURCE` / `GTM_INSTALL_SOURCE` | Override the install source for the two servers in this repo (e.g. a local path while developing). |
 
@@ -136,11 +137,72 @@ one of the `claude_desktop_config.json.bak.*` backups the installer left.
 | A server binary is missing after install | Read `/tmp/ga-mcp-install.log` — the installer writes every `uv tool install` there. |
 | `API 활성화 권한이 없습니다` warning | You're not owner/editor on the project. Ask an admin to enable the listed APIs once; the step passes automatically afterwards. |
 | `search_change_history_events` returns a permission error | Its `analytics.edit` scope is missing from ADC. Re-run `setup.sh` with GA Admin selected. |
+| GA servers fail with `Could not contact DNS servers` while GTM works on the same host | gRPC DNS issue, not the network — see [GA servers can't resolve DNS](#ga-servers-cant-resolve-dns-grpc) below. |
+| `403 ... quota project` / `API has not been used in project` | See [403 after DNS is fixed](#403-after-dns-is-fixed) below. |
 | gcloud fails to start | The installer pins a `uv`-managed Python 3.12 via `CLOUDSDK_PYTHON` when the system `python3` is too old; re-run it if you hit this outside the script. |
 | Ads was silently skipped | No developer token was given. Get one at the [API Center](https://ads.google.com/aw/apicenter) and re-run. |
 | GTM delete/publish refuses to run | Expected — add `GTM_MCP_ALLOW_DESTRUCTIVE=1` to the `tagmanager-mcp` env, or re-run and answer `y`. |
 
 **Note:** the Ads developer token is stored in plain text in the client config.
+
+### GA servers can't resolve DNS (gRPC)
+
+Symptom: `analytics-mcp` / `ga4-admin-mcp` fail with
+`Could not contact DNS servers`, but `tagmanager-mcp` (and `curl`) reach
+Google fine from the same machine.
+
+Cause: `tagmanager-mcp` uses `google-api-python-client` (REST over HTTPS), so
+it goes through the OS resolver and any HTTPS proxy. The two GA servers use
+`google-analytics-data` / `google-analytics-admin`, whose default transport is
+**gRPC**. gRPC doesn't use the OS resolver — it ships its own (c-ares) that
+sends raw UDP queries to port 53. Sandboxed / proxied hosts typically allow
+outbound 443 only and block raw UDP/53, so c-ares fails; that message is its
+error string.
+
+Fix — set one env var on the MCP server process:
+
+```
+GRPC_DNS_RESOLVER=native
+```
+
+This makes gRPC use the OS `getaddrinfo` like everything else. `setup.sh`
+already puts it (plus `GOOGLE_CLOUD_QUOTA_PROJECT`) in both GA server blocks;
+if you wired the servers by hand, add it yourself:
+
+```json
+"analytics-mcp": {
+  "command": "...",
+  "args": [],
+  "env": {
+    "GRPC_DNS_RESOLVER": "native",
+    "GOOGLE_CLOUD_QUOTA_PROJECT": "your-project-id"
+  }
+}
+```
+
+Do the same for `ga4-admin-mcp`. Docker → `-e`, systemd → `Environment=`,
+hosted → that service's env settings. Restart the MCP servers afterwards
+(Claude Desktop: ⌘Q and reopen).
+
+If that's still not enough, `ga4-admin-mcp` can skip gRPC entirely: set
+`GA4_ADMIN_MCP_TRANSPORT=rest` in its env (or run
+`GA4_ADMIN_MCP_TRANSPORT=rest bash setup.sh`). It then talks REST/HTTPS, the
+same path the GTM server already proves works. (`analytics-mcp` is the
+official upstream package, so only the env-var fix applies to it.)
+
+### 403 after DNS is fixed
+
+With user-account ADC (`gcloud auth application-default login`) and no quota
+project, Google returns 403 for Analytics (and GTM) calls. `setup.sh` handles
+this, but if you signed in manually:
+
+```shell
+gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+```
+
+and make sure **Google Analytics Data API** and **Google Analytics Admin API**
+are enabled on that project. Then restart the servers and retry
+`get_account_summaries`.
 
 ## Layout
 
