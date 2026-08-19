@@ -79,6 +79,7 @@ bash /tmp/gmm-setup.sh
 | `GA_MCP_ADS_DEV_TOKEN` | Google Ads developer token ([API Center](https://ads.google.com/aw/apicenter)). |
 | `GA_MCP_ADS_LOGIN_CUSTOMER_ID` | MCC (manager) customer ID; dashes are stripped. |
 | `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*` and `publish_version`. |
+| `GA_MCP_GRPC_PROXY` | e.g. `http://proxy:3128`. Written as `grpc_proxy` into the gRPC-based servers' env (GA, GA Admin, Ads) for hosts that only reach Google through an HTTPS egress proxy. |
 | `GA4_ADMIN_MCP_TRANSPORT` | `rest` makes `ga4-admin-mcp` call Google over HTTPS instead of gRPC (see [Troubleshooting](#troubleshooting)). Default: gRPC. |
 | `GA_PACKAGE` / `ADS_PACKAGE` | Override the PyPI package installed for GA / Ads. |
 | `GA_ADMIN_INSTALL_SOURCE` / `GTM_INSTALL_SOURCE` | Override the install source for the two servers in this repo (e.g. a local path while developing). |
@@ -139,7 +140,7 @@ one of the `claude_desktop_config.json.bak.*` backups the installer left.
 | `Failed to reconnect to google-ads-mcp: CONNECTION_CLOSED` (or the same for `analytics-mcp`) | `mcp` 2.0 got installed; it removed `mcp.server.fastmcp`, so the server dies on import. Re-run `setup.sh`, or `uv tool install --force --with "mcp<2" google-ads-mcp`. Running the binary by hand shows the `ModuleNotFoundError`. |
 | `API 활성화 권한이 없습니다` warning | You're not owner/editor on the project. Ask an admin to enable the listed APIs once; the step passes automatically afterwards. |
 | `search_change_history_events` returns a permission error | Its `analytics.edit` scope is missing from ADC. Re-run `setup.sh` with GA Admin selected. |
-| GA servers fail with `Could not contact DNS servers` while GTM works on the same host | gRPC DNS issue, not the network — see [GA servers can't resolve DNS](#ga-servers-cant-resolve-dns-grpc) below. |
+| GA / Ads servers fail with `DNS resolution failed` / `Could not contact DNS servers` (often surfaced as 503 / UNAVAILABLE) while GTM works on the same host | gRPC DNS/proxy issue, not an allowlist — see [GA/Ads servers can't resolve DNS](#gaads-servers-cant-resolve-dns-grpc) below. |
 | `403 ... quota project` / `API has not been used in project` | See [403 after DNS is fixed](#403-after-dns-is-fixed) below. |
 | gcloud fails to start | The installer pins a `uv`-managed Python 3.12 via `CLOUDSDK_PYTHON` when the system `python3` is too old; re-run it if you hit this outside the script. |
 | Ads was silently skipped | No developer token was given. Get one at the [API Center](https://ads.google.com/aw/apicenter) and re-run. |
@@ -147,19 +148,23 @@ one of the `claude_desktop_config.json.bak.*` backups the installer left.
 
 **Note:** the Ads developer token is stored in plain text in the client config.
 
-### GA servers can't resolve DNS (gRPC)
+### GA/Ads servers can't resolve DNS (gRPC)
 
-Symptom: `analytics-mcp` / `ga4-admin-mcp` fail with
-`Could not contact DNS servers`, but `tagmanager-mcp` (and `curl`) reach
-Google fine from the same machine.
+Symptom: `analytics-mcp` / `ga4-admin-mcp` / `google-ads-mcp` fail with
+`DNS resolution failed for analyticsadmin.googleapis.com` (or
+`googleads.googleapis.com`), `Could not contact DNS servers`, or a bare
+503 / `UNAVAILABLE` — but `tagmanager-mcp` (and `curl`) reach Google fine from
+the same machine.
 
-Cause: `tagmanager-mcp` uses `google-api-python-client` (REST over HTTPS), so
-it goes through the OS resolver and any HTTPS proxy. The two GA servers use
-`google-analytics-data` / `google-analytics-admin`, whose default transport is
-**gRPC**. gRPC doesn't use the OS resolver — it ships its own (c-ares) that
-sends raw UDP queries to port 53. Sandboxed / proxied hosts typically allow
-outbound 443 only and block raw UDP/53, so c-ares fails; that message is its
-error string.
+This is **not** a missing domain allowlist entry and not auth (auth failures
+are 401/403). `tagmanager-mcp` uses `google-api-python-client` (REST over
+HTTPS), so it goes through the OS resolver and any `HTTPS_PROXY`. The GA
+servers (`google-analytics-data` / `google-analytics-admin`) and the Ads
+server (`google-ads-python`, gRPC-only) use **gRPC**. gRPC doesn't use the OS
+resolver — it ships its own (c-ares) that sends raw UDP queries to port 53 —
+and it doesn't read `HTTPS_PROXY` either. Sandboxed / proxied hosts typically
+allow outbound 443 only and block raw UDP/53, so c-ares fails with exactly
+that message.
 
 Fix — set one env var on the MCP server process:
 
@@ -182,15 +187,34 @@ if you wired the servers by hand, add it yourself:
 }
 ```
 
-Do the same for `ga4-admin-mcp`. Docker → `-e`, systemd → `Environment=`,
-hosted → that service's env settings. Restart the MCP servers afterwards
-(Claude Desktop: ⌘Q and reopen).
+Do the same for `ga4-admin-mcp` **and `google-ads-mcp`**. Docker → `-e`,
+systemd → `Environment=`, hosted → that service's env settings. Restart the
+MCP servers afterwards (Claude Desktop: ⌘Q and reopen) and make sure the
+variable actually reached the process — `claude mcp get <name>` shows the env.
+
+**Behind an egress proxy** (the host has `HTTPS_PROXY` set and no direct
+DNS): `native` alone isn't enough, because the OS resolver can't resolve
+external names either — only the proxy can. gRPC reads `grpc_proxy` (or
+lowercase `https_proxy`; it ignores the uppercase spelling), so add it to the
+same three server blocks:
+
+```json
+"env": {
+  "GRPC_DNS_RESOLVER": "native",
+  "grpc_proxy": "http://proxy-host:3128"
+}
+```
+
+(`setup.sh` does this for you with `GA_MCP_GRPC_PROXY=http://proxy-host:3128`.)
+gRPC then only resolves the proxy host and sends `CONNECT` for the Google
+endpoint — the same path the GTM server already uses.
 
 If that's still not enough, `ga4-admin-mcp` can skip gRPC entirely: set
 `GA4_ADMIN_MCP_TRANSPORT=rest` in its env (or run
 `GA4_ADMIN_MCP_TRANSPORT=rest bash setup.sh`). It then talks REST/HTTPS, the
-same path the GTM server already proves works. (`analytics-mcp` is the
-official upstream package, so only the env-var fix applies to it.)
+same path the GTM server already proves works. (`analytics-mcp` and
+`google-ads-mcp` are the official upstream packages and gRPC-only, so only the
+env-var fixes apply to them.)
 
 ### 403 after DNS is fixed
 

@@ -24,7 +24,7 @@ The client uses gRPC by default. On hosts where gRPC's built-in DNS resolver
 can't reach port 53 (`Could not contact DNS servers`), set
 `GRPC_DNS_RESOLVER=native` in the server env first; if that isn't enough,
 `GA4_ADMIN_MCP_TRANSPORT=rest` switches the Admin API client to REST/HTTPS.
-See the [root troubleshooting guide](../../README.md#ga-servers-cant-resolve-dns-grpc).
+See the [root troubleshooting guide](../../README.md#gaads-servers-cant-resolve-dns-grpc).
 
 ## Not included
 
