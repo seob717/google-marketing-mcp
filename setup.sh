@@ -42,6 +42,8 @@
 #     # make ga4-admin-mcp use REST instead of gRPC (fallback for hosts where
 #     # even GRPC_DNS_RESOLVER=native can't reach Google; the GA servers get
 #     # GRPC_DNS_RESOLVER=native by default)
+#   GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE=1 bash setup.sh
+#     # allow the GA4 Admin server's archive/delete tools (default: disabled)
 
 set -euo pipefail
 
@@ -199,6 +201,16 @@ if [ "$WITH_ADS" = "1" ] && [ -z "$ADS_LOGIN_CUSTOMER_ID" ]; then
   ask ADS_LOGIN_CUSTOMER_ID "MCC(관리자 계정)를 통해 접근한다면 관리자 고객 ID를 입력하세요 (직접 접근이면 Enter): "
 fi
 ADS_LOGIN_CUSTOMER_ID="${ADS_LOGIN_CUSTOMER_ID//-/}"
+
+# --- GA4 Admin: destructive gate ----------------------------------------------
+# GA Admin supports read + write. Archive/delete stay disabled unless opted in.
+GA_ADMIN_ALLOW_DESTRUCTIVE="${GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE:-}"
+if [ "$WITH_GA_ADMIN" = "1" ] && [ -z "$GA_ADMIN_ALLOW_DESTRUCTIVE" ]; then
+  ask GA_ADMIN_DESTRUCTIVE_REPLY "GA4 설정의 보관·삭제 같은 위험한 쓰기도 허용할까요? (기본: 비허용) [y/N]: "
+  case "$GA_ADMIN_DESTRUCTIVE_REPLY" in
+    [yY]*) GA_ADMIN_ALLOW_DESTRUCTIVE=1 ;;
+  esac
+fi
 
 # --- Google Tag Manager: destructive gate -------------------------------------
 # GTM supports read + write. Delete/publish stay disabled unless opted in.
@@ -428,6 +440,7 @@ WITH_ADS="$WITH_ADS" ADS_MCP_BIN="$ADS_MCP_BIN" ADS_DEV_TOKEN="$ADS_DEV_TOKEN" \
 ADS_LOGIN_CUSTOMER_ID="$ADS_LOGIN_CUSTOMER_ID" \
 WITH_GTM="$WITH_GTM" GTM_MCP_BIN="$GTM_MCP_BIN" GTM_ALLOW_DESTRUCTIVE="$GTM_ALLOW_DESTRUCTIVE" \
 GA_ADMIN_TRANSPORT="${GA4_ADMIN_MCP_TRANSPORT:-}" GRPC_PROXY="${GA_MCP_GRPC_PROXY:-}" \
+GA_ADMIN_ALLOW_DESTRUCTIVE="$GA_ADMIN_ALLOW_DESTRUCTIVE" \
 SERVERS_JSON="$SERVERS_JSON" \
 "$UV" run --no-project python - <<'PY'
 import json, os
@@ -464,6 +477,8 @@ if os.environ.get("WITH_GA_ADMIN") == "1":
     if os.environ.get("GA_ADMIN_TRANSPORT"):
         # Escape hatch: GA4_ADMIN_MCP_TRANSPORT=rest bypasses gRPC entirely.
         ga_admin_env["GA4_ADMIN_MCP_TRANSPORT"] = os.environ["GA_ADMIN_TRANSPORT"]
+    if os.environ.get("GA_ADMIN_ALLOW_DESTRUCTIVE") == "1":
+        ga_admin_env["GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE"] = "1"
     servers["ga4-admin-mcp"] = {
         "command": os.environ["GA_ADMIN_MCP_BIN"],
         "args": [],
@@ -578,6 +593,13 @@ echo "이렇게 물어보세요:"
 if [ "$WITH_ADS" = "1" ]; then
   echo ""
   echo "참고: developer token은 설정 파일에 평문으로 저장됩니다."
+fi
+if [ "$WITH_GA_ADMIN" = "1" ]; then
+  if [ "$GA_ADMIN_ALLOW_DESTRUCTIVE" = "1" ]; then
+    echo "참고: GA4 설정 보관·삭제 허용됨 (GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE=1)"
+  else
+    echo "참고: GA4 설정 보관·삭제 비활성 (켜려면 ga4-admin-mcp env에 GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE=1 추가)"
+  fi
 fi
 if [ "$WITH_GTM" = "1" ]; then
   if [ "$GTM_ALLOW_DESTRUCTIVE" = "1" ]; then

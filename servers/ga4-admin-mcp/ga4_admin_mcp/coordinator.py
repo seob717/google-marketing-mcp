@@ -23,13 +23,25 @@ from mcp.server.lowlevel import Server
 from google.adk.tools.function_tool import FunctionTool
 from google.adk.tools.mcp_tool.conversion_utils import adk_to_mcp_tool_type
 
-from ga4_admin_mcp.tools import admin
+from ga4_admin_mcp.tools import admin, write
 
 _FUNCTIONS = [
     admin.list_data_streams,
     admin.get_data_stream,
     admin.get_global_site_tag,
     admin.search_change_history_events,
+    admin.list_custom_dimensions,
+    admin.list_custom_metrics,
+    admin.list_key_events,
+    write.create_custom_dimension,
+    write.update_custom_dimension,
+    write.archive_custom_dimension,
+    write.create_custom_metric,
+    write.update_custom_metric,
+    write.archive_custom_metric,
+    write.create_key_event,
+    write.update_key_event,
+    write.delete_key_event,
 ]
 
 tools = [FunctionTool(fn) for fn in _FUNCTIONS]

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only GA4 Admin tools: data streams and change history.
+"""Read-only GA4 Admin tools: data streams, change history, and definitions.
 
 Exposes property configuration the Data API can't see. Data stream reads work
 with analytics.readonly; change history requires the broader analytics.edit
@@ -152,6 +152,61 @@ async def search_change_history_events(
         pager = create_admin_alpha_client().search_change_history_events(
             request=request
         )
+        return [proto_to_dict(page) for page in pager]
+
+    return await asyncio.to_thread(_sync_call)
+
+
+async def list_custom_dimensions(property_id: int | str) -> List[Dict[str, Any]]:
+    """Lists the property's custom dimensions, including the IDs needed to update them.
+
+    The Data API's metadata only reports api_name/ui_name; the numeric ID in
+    each resource name here is what update_custom_dimension and
+    archive_custom_dimension take.
+
+    Args:
+        property_id: The Google Analytics property ID (number or 'properties/NUMBER').
+    """
+    request = admin_v1alpha.ListCustomDimensionsRequest(
+        parent=construct_property_rn(property_id)
+    )
+
+    def _sync_call():
+        pager = create_admin_alpha_client().list_custom_dimensions(request=request)
+        return [proto_to_dict(page) for page in pager]
+
+    return await asyncio.to_thread(_sync_call)
+
+
+async def list_custom_metrics(property_id: int | str) -> List[Dict[str, Any]]:
+    """Lists the property's custom metrics, including the IDs needed to update them.
+
+    Args:
+        property_id: The Google Analytics property ID (number or 'properties/NUMBER').
+    """
+    request = admin_v1alpha.ListCustomMetricsRequest(
+        parent=construct_property_rn(property_id)
+    )
+
+    def _sync_call():
+        pager = create_admin_alpha_client().list_custom_metrics(request=request)
+        return [proto_to_dict(page) for page in pager]
+
+    return await asyncio.to_thread(_sync_call)
+
+
+async def list_key_events(property_id: int | str) -> List[Dict[str, Any]]:
+    """Lists the property's key events (conversions) and their IDs.
+
+    Args:
+        property_id: The Google Analytics property ID (number or 'properties/NUMBER').
+    """
+    request = admin_v1alpha.ListKeyEventsRequest(
+        parent=construct_property_rn(property_id)
+    )
+
+    def _sync_call():
+        pager = create_admin_alpha_client().list_key_events(request=request)
         return [proto_to_dict(page) for page in pager]
 
     return await asyncio.to_thread(_sync_call)

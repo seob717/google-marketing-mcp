@@ -11,16 +11,17 @@ the clients you choose.
 | Server | Package | Source | Capability |
 |---|---|---|---|
 | Google Analytics | `analytics-mcp` | official PyPI | reporting (Data API): `run_report`, `run_realtime_report`, `run_funnel_report`, account/property lookups |
-| Google Analytics Admin | `ga4-admin-mcp` | `servers/ga4-admin-mcp` (this repo) | read-only admin: `list_data_streams`, `get_global_site_tag`, `search_change_history_events` |
+| Google Analytics Admin | `ga4-admin-mcp` | `servers/ga4-admin-mcp` (this repo) | **read + write** admin: `list_data_streams`, `get_global_site_tag`, `search_change_history_events`, custom dimensions/metrics, key events |
 | Google Ads | `google-ads-mcp` | official PyPI | read-only ads reporting (GAQL `search`, accessible customers) |
 | Google Tag Manager | `tagmanager-mcp` | `servers/tagmanager-mcp` (this repo) | **read + write**: tags/triggers/variables, versions, publish |
 
 **Design:** the official servers (GA, Ads) install straight from PyPI, so they
 track their own upstream automatically. Our own additions — GA Admin and GTM —
 live here under `servers/`. No fork to maintain. GA Admin is separate from GA
-reporting because its change-history tool needs the broader `analytics.edit`
-scope; GTM's destructive ops (delete/publish) stay gated behind
-`GTM_MCP_ALLOW_DESTRUCTIVE=1`.
+reporting because it needs the broader `analytics.edit` scope. Destructive ops
+stay gated behind an opt-in env var in both writable servers:
+`GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE=1` (archive/delete) and
+`GTM_MCP_ALLOW_DESTRUCTIVE=1` (delete/publish).
 
 ## Requirements
 
@@ -236,7 +237,7 @@ are enabled on that project. Then restart the servers and retry
 google-marketing-mcp/
   setup.sh                     # unified installer
   servers/
-    ga4-admin-mcp/            # GA4 Admin MCP server (read-only)
+    ga4-admin-mcp/            # GA4 Admin MCP server (read + write)
     tagmanager-mcp/          # GTM MCP server (read + write)
 ```
 

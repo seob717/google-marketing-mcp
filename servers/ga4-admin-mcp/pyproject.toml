@@ -1,6 +1,6 @@
 [project]
 name = "ga4-admin-mcp"
-description = "Read-only MCP server for the Google Analytics Admin API (data streams, change history)"
+description = "MCP server for the Google Analytics Admin API (data streams, change history, custom definitions; read + write)"
 version = "0.1.0"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -34,3 +34,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["ga4_admin_mcp*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
