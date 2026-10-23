@@ -57,3 +57,13 @@ def test_destructive_gate_enabled_by_env(monkeypatch):
     assert utils.destructive_allowed() is True
     # Should not raise.
     utils.ensure_destructive_allowed("publish_version")
+
+
+def test_delete_workspace_is_gated(monkeypatch):
+    import asyncio
+
+    from tagmanager_mcp.tools import write
+
+    monkeypatch.delenv("GTM_MCP_ALLOW_DESTRUCTIVE", raising=False)
+    with pytest.raises(PermissionError):
+        asyncio.run(write.delete_workspace(6, 42, 3))

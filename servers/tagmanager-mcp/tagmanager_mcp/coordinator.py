@@ -52,6 +52,7 @@ _FUNCTIONS = [
     write.update_variable,
     write.delete_variable,
     write.create_workspace,
+    write.delete_workspace,
     write.create_version,
     write.publish_version,
 ]

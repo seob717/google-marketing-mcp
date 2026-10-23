@@ -261,6 +261,25 @@ async def create_workspace(
     )
 
 
+async def delete_workspace(
+    account_id: int | str,
+    container_id: int | str,
+    workspace_id: int | str,
+) -> Dict[str, Any]:
+    """Deletes a workspace and discards its unpublished changes. Destructive:
+    requires GTM_MCP_ALLOW_DESTRUCTIVE=1.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+    """
+    ensure_destructive_allowed("delete_workspace")
+    path = workspace_path(account_id, container_id, workspace_id)
+    await _run(lambda: _workspaces(tagmanager()).delete(path=path))
+    return {"deleted": path}
+
+
 async def create_version(
     account_id: int | str,
     container_id: int | str,

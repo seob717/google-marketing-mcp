@@ -23,7 +23,8 @@ them with `list_accounts` → `list_containers` → `list_workspaces`.
 **Write** (workspace-scoped; nothing goes live until you create + publish a
 version): `create_tag`, `update_tag`, `delete_tag`, `create_trigger`,
 `update_trigger`, `delete_trigger`, `create_variable`, `update_variable`,
-`delete_variable`, `create_workspace`, `create_version`, `publish_version`
+`delete_variable`, `create_workspace`, `delete_workspace`, `create_version`,
+`publish_version`
 
 ### Destructive-operation guard 🔒
 
