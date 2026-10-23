@@ -44,6 +44,8 @@
 #     # GRPC_DNS_RESOLVER=native by default)
 #   GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE=1 bash setup.sh
 #     # allow the GA4 Admin server's archive/delete tools (default: disabled)
+#   GA_MCP_ALLOW_WRITE=1 bash setup.sh
+#     # start analytics-mcp with --allow-write (annotation create tool; default: off)
 
 set -euo pipefail
 
@@ -222,6 +224,16 @@ if [ "$WITH_GTM" = "1" ] && [ -z "$GTM_ALLOW_DESTRUCTIVE" ]; then
   esac
 fi
 
+# --- Google Analytics: write gate ---------------------------------------------
+# analytics-mcp only registers its write tools when started with --allow-write.
+GA_ALLOW_WRITE="${GA_MCP_ALLOW_WRITE:-}"
+if [ "$WITH_GA" = "1" ] && [ -z "$GA_ALLOW_WRITE" ]; then
+  ask GA_WRITE_REPLY "GA 주석 만들기 같은 쓰기 도구도 켤까요? (기본: 끔) [y/N]: "
+  case "$GA_WRITE_REPLY" in
+    [yY]*) GA_ALLOW_WRITE=1 ;;
+  esac
+fi
+
 # All servers may have been skipped (e.g. Ads-only with no token).
 if [ "$WITH_GA" = "0" ] && [ "$WITH_GA_ADMIN" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
   err "설치할 서버가 없습니다."
@@ -290,14 +302,14 @@ install_failed() {
 }
 
 step "3/6 · MCP 서버 설치"
-# The PyPI servers don't pin `mcp`, and mcp 2.0 removed `mcp.server.fastmcp`
-# (the import they use) — an unconstrained install starts and immediately dies
-# with CONNECTION_CLOSED. `--with "mcp<2"` pins it; `--force` makes the pin
-# apply to existing installs too and doubles as the upgrade path.
+# The PyPI servers now require mcp 2.x themselves, so they install unpinned.
+# (An old `--with "mcp<2"` pin made the upgrade fail, and `|| true` hid it, leaving
+# stale versions behind.) `--force` doubles as the upgrade path; a failed install
+# stops here so a stale binary can't pass for an upgraded one.
 MCP_BIN=""
 if [ "$WITH_GA" = "1" ]; then
   info "analytics-mcp 설치/업데이트 중... (공식 PyPI)"
-  uv_install "$UV" tool install --force --with "mcp<2" "$GA_PACKAGE" --quiet || true
+  uv_install "$UV" tool install --force "$GA_PACKAGE" --quiet || install_failed "analytics-mcp"
   MCP_BIN="$HOME/.local/bin/analytics-mcp"
   if [ ! -x "$MCP_BIN" ]; then
     MCP_BIN="$(command -v analytics-mcp 2>/dev/null || true)"
@@ -325,7 +337,7 @@ fi
 ADS_MCP_BIN=""
 if [ "$WITH_ADS" = "1" ]; then
   info "google-ads-mcp 설치/업데이트 중..."
-  uv_install "$UV" tool install --force --with "mcp<2" "$ADS_PACKAGE" --quiet || true
+  uv_install "$UV" tool install --force "$ADS_PACKAGE" --quiet || install_failed "google-ads-mcp"
   ADS_MCP_BIN="$HOME/.local/bin/google-ads-mcp"
   if [ ! -x "$ADS_MCP_BIN" ]; then
     ADS_MCP_BIN="$(command -v google-ads-mcp 2>/dev/null || true)"
@@ -434,7 +446,7 @@ ok "인증 설정 완료"
 # Build the server definitions once; every selected client reuses them.
 SERVERS_JSON="$(mktemp)"
 trap 'rm -f "$SERVERS_JSON"' EXIT
-WITH_GA="$WITH_GA" MCP_BIN="$MCP_BIN" ADC_PATH="$ADC_PATH" PROJECT="$PROJECT" \
+WITH_GA="$WITH_GA" MCP_BIN="$MCP_BIN" GA_ALLOW_WRITE="$GA_ALLOW_WRITE" ADC_PATH="$ADC_PATH" PROJECT="$PROJECT" \
 WITH_GA_ADMIN="$WITH_GA_ADMIN" GA_ADMIN_MCP_BIN="$GA_ADMIN_MCP_BIN" \
 WITH_ADS="$WITH_ADS" ADS_MCP_BIN="$ADS_MCP_BIN" ADS_DEV_TOKEN="$ADS_DEV_TOKEN" \
 ADS_LOGIN_CUSTOMER_ID="$ADS_LOGIN_CUSTOMER_ID" \
@@ -468,7 +480,7 @@ if os.environ.get("GRPC_PROXY"):
 if os.environ.get("WITH_GA") == "1":
     servers["analytics-mcp"] = {
         "command": os.environ["MCP_BIN"],
-        "args": [],
+        "args": ["--allow-write"] if os.environ.get("GA_ALLOW_WRITE") == "1" else [],
         "env": dict(grpc_env),
     }
 
@@ -593,6 +605,13 @@ echo "이렇게 물어보세요:"
 if [ "$WITH_ADS" = "1" ]; then
   echo ""
   echo "참고: developer token은 설정 파일에 평문으로 저장됩니다."
+fi
+if [ "$WITH_GA" = "1" ]; then
+  if [ "$GA_ALLOW_WRITE" = "1" ]; then
+    echo "참고: GA 쓰기 도구 켜짐 (analytics-mcp --allow-write)"
+  else
+    echo "참고: GA 쓰기 도구 꺼짐 (켜려면 analytics-mcp args에 --allow-write 추가)"
+  fi
 fi
 if [ "$WITH_GA_ADMIN" = "1" ]; then
   if [ "$GA_ADMIN_ALLOW_DESTRUCTIVE" = "1" ]; then

@@ -79,7 +79,8 @@ bash /tmp/gmm-setup.sh
 | `GA_MCP_PROJECT` | Google Cloud project ID. Skips the project prompt. |
 | `GA_MCP_ADS_DEV_TOKEN` | Google Ads developer token ([API Center](https://ads.google.com/aw/apicenter)). |
 | `GA_MCP_ADS_LOGIN_CUSTOMER_ID` | MCC (manager) customer ID; dashes are stripped. |
-| `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*` and `publish_version`. |
+| `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*`, `delete_workspace` and `publish_version`. |
+| `GA_MCP_ALLOW_WRITE` | `1` starts `analytics-mcp` with `--allow-write` (enables `create_property_annotation`). Default: off. |
 | `GA_MCP_GRPC_PROXY` | e.g. `http://proxy:3128`. Written as `grpc_proxy` into the gRPC-based servers' env (GA, GA Admin, Ads) for hosts that only reach Google through an HTTPS egress proxy. |
 | `GA4_ADMIN_MCP_TRANSPORT` | `rest` makes `ga4-admin-mcp` call Google over HTTPS instead of gRPC (see [Troubleshooting](#troubleshooting)). Default: gRPC. |
 | `GA_PACKAGE` / `ADS_PACKAGE` | Override the PyPI package installed for GA / Ads. |
@@ -115,8 +116,8 @@ Re-running `setup.sh` is the reliable path — it upgrades the PyPI servers and
 reinstalls the git-sourced ones. Manually:
 
 ```shell
-uv tool install --force --with "mcp<2" analytics-mcp
-uv tool install --force --with "mcp<2" google-ads-mcp
+uv tool install --force analytics-mcp
+uv tool install --force google-ads-mcp
 uv tool install --force "git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/ga4-admin-mcp"
 uv tool install --force "git+https://github.com/seob717/google-marketing-mcp.git@main#subdirectory=servers/tagmanager-mcp"
 ```
@@ -138,7 +139,7 @@ one of the `claude_desktop_config.json.bak.*` backups the installer left.
 |---|---|
 | Servers don't show up in Claude Desktop | Quit with ⌘Q (closing the window isn't enough) and reopen. |
 | A server binary is missing after install | Read `/tmp/ga-mcp-install.log` — the installer writes every `uv tool install` there. |
-| `Failed to reconnect to google-ads-mcp: CONNECTION_CLOSED` (or the same for `analytics-mcp`) | `mcp` 2.0 got installed; it removed `mcp.server.fastmcp`, so the server dies on import. Re-run `setup.sh`, or `uv tool install --force --with "mcp<2" google-ads-mcp`. Running the binary by hand shows the `ModuleNotFoundError`. |
+| `Failed to reconnect to google-ads-mcp: CONNECTION_CLOSED` (or the same for `analytics-mcp`) | An old release pinned to `mcp<2` is still installed (analytics-mcp ≤0.7.0, google-ads-mcp 0.0.1). Current releases require `mcp` 2.x — re-run `setup.sh` or `uv tool install --force google-ads-mcp`. Running the binary by hand shows the import error. |
 | `API 활성화 권한이 없습니다` warning | You're not owner/editor on the project. Ask an admin to enable the listed APIs once; the step passes automatically afterwards. |
 | `search_change_history_events` returns a permission error | Its `analytics.edit` scope is missing from ADC. Re-run `setup.sh` with GA Admin selected. |
 | GA / Ads servers fail with `DNS resolution failed` / `Could not contact DNS servers` (often surfaced as 503 / UNAVAILABLE) while GTM works on the same host | gRPC DNS/proxy issue, not an allowlist — see [GA/Ads servers can't resolve DNS](#gaads-servers-cant-resolve-dns-grpc) below. |
