@@ -15,29 +15,40 @@ subprocess — no hosting, no ports — and authenticates with your local
 All IDs are the **numeric** GTM IDs (not the public `GTM-XXXX` code). Discover
 them with `list_accounts` → `list_containers` → `list_workspaces`.
 
-**Read:** `list_accounts`, `list_containers`, `get_container`, `list_workspaces`,
-`get_workspace`, `get_workspace_status`, `quick_preview`, `list_tags`, `get_tag`, `list_triggers`, `get_trigger`,
-`list_variables`, `get_variable`, `list_built_in_variables`, `list_versions`,
-`get_version`, `get_live_version`, `compare_live_versions` (dev vs prod diff)
+| Group | Tools | Notes |
+|---|---|---|
+| Discover | `list_accounts`, `list_containers`, `get_container`, `list_workspaces`, `get_workspace` | |
+| Tags / triggers / variables | `list_tags`, `get_tag`, `create_tag`, `update_tag`, `delete_tag` 🔒 (same set for `*_trigger`, `*_variable`) | Lists follow every page. |
+| Built-in variables | `list_built_in_variables`, `enable_built_in_variables`, `disable_built_in_variables` 🔒 | |
+| Workspace changes | `get_workspace_status`, `revert_change` 🔒, `sync_workspace`, `resolve_conflict` 🔒, `create_workspace`, `delete_workspace` 🔒 | `revert_change` undoes one tag/trigger/variable change. |
+| Versions | `quick_preview`, `create_version`, `publish_version` 🔒, `list_versions`, `get_version`, `get_live_version`, `compare_live_versions` | `compare_live_versions` diffs two containers (e.g. dev vs prod) by name. |
 
-`update_tag` / `update_trigger` / `update_variable` merge by default: only the
-fields you pass change, and `parameter` entries merge by `key`. Pass
-`replace=true` to write the full resource (e.g. to remove a parameter).
+Create/update/sync only touch a workspace; nothing goes live until you create
+and publish a version. A typical change:
 
-**Write** (workspace-scoped; nothing goes live until you create + publish a
-version): `create_tag`, `update_tag`, `delete_tag`, `create_trigger`,
-`update_trigger`, `delete_trigger`, `create_variable`, `update_variable`,
-`delete_variable`, `create_workspace`, `delete_workspace`, `revert_change`,
-`enable_built_in_variables`, `disable_built_in_variables`, `sync_workspace`,
-`resolve_conflict`, `create_version`,
-`publish_version`
+1. Edit with `create_*` / `update_*` in a workspace.
+2. `get_workspace_status` — check pending changes and merge conflicts. On a
+   conflict, `sync_workspace`, then `resolve_conflict` or `revert_change`.
+3. `quick_preview` — catch compiler errors.
+4. `create_version` → `publish_version`.
+5. `compare_live_versions` — confirm dev and prod match.
+
+### Updates merge by default
+
+`update_tag` / `update_trigger` / `update_variable` read the current entity,
+change only the fields you pass, and merge `parameter` entries by `key`, so
+untouched parameters survive. The write carries the entity's fingerprint and
+fails if someone changed it after the read. A list-type parameter such as a
+GA4 tag's `eventSettingsTable` is one parameter, so pass its full value to add
+a row. Pass `replace=true` to write the full resource (e.g. to remove a
+parameter).
 
 ### Destructive-operation guard 🔒
 
-`delete_*`, `revert_change`, `disable_built_in_variables`, `resolve_conflict`
-and `publish_version` refuse to run unless the server environment
-sets `GTM_MCP_ALLOW_DESTRUCTIVE=1`. Create/update are always allowed but only
-affect a workspace until published.
+Tools marked 🔒 refuse to run unless the server environment sets
+`GTM_MCP_ALLOW_DESTRUCTIVE=1`: `delete_*`, `delete_workspace`, `revert_change`,
+`resolve_conflict`, `disable_built_in_variables` and `publish_version`. Each
+can drop work or change the live container.
 
 ## Setup
 
@@ -73,7 +84,7 @@ affect a workspace until published.
    }'
    ```
 
-   To enable delete/publish, add `"GTM_MCP_ALLOW_DESTRUCTIVE": "1"` to `env`.
+   To enable the 🔒 tools, add `"GTM_MCP_ALLOW_DESTRUCTIVE": "1"` to `env`.
 
    For Claude Desktop, add the same block under `mcpServers` in
    `claude_desktop_config.json`.

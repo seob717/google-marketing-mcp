@@ -13,7 +13,7 @@ the clients you choose.
 | Google Analytics | `analytics-mcp` | official PyPI | reporting (Data API): `run_report`, `run_realtime_report`, `run_funnel_report`, account/property lookups |
 | Google Analytics Admin | `ga4-admin-mcp` | `servers/ga4-admin-mcp` (this repo) | **read + write** admin: `list_data_streams`, `get_global_site_tag`, `search_change_history_events`, custom dimensions/metrics, key events |
 | Google Ads | `google-ads-mcp` | official PyPI | read-only ads reporting (GAQL `search`, accessible customers) |
-| Google Tag Manager | `tagmanager-mcp` | `servers/tagmanager-mcp` (this repo) | **read + write**: tags/triggers/variables, versions, publish |
+| Google Tag Manager | `tagmanager-mcp` | `servers/tagmanager-mcp` (this repo) | **read + write**: tags/triggers/variables, workspace status/conflicts/revert, versions, publish, dev vs prod diff |
 
 **Design:** the official servers (GA, Ads) install straight from PyPI, so they
 track their own upstream automatically. Our own additions — GA Admin and GTM —
@@ -21,7 +21,7 @@ live here under `servers/`. No fork to maintain. GA Admin is separate from GA
 reporting because it needs the broader `analytics.edit` scope. Destructive ops
 stay gated behind an opt-in env var in both writable servers:
 `GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE=1` (archive/delete) and
-`GTM_MCP_ALLOW_DESTRUCTIVE=1` (delete/publish).
+`GTM_MCP_ALLOW_DESTRUCTIVE=1` (delete/revert/resolve conflict/publish).
 
 ## Requirements
 
@@ -49,7 +49,8 @@ The script:
    with `GA_MCP_SERVERS=ga,ga-admin,ads,gtm`.
 3. For **Ads**, asks for a developer token (and an MCC customer ID if you go
    through a manager account). No token → Ads is skipped.
-4. For **GTM**, asks whether to allow destructive writes (delete / publish).
+4. For **GTM**, asks whether to allow destructive writes (delete / revert /
+   resolve conflict / publish).
    Default is no.
 5. Installs the servers via `uv`, installs the Google Cloud SDK if missing.
 6. Signs you in once (ADC) with the union of scopes for whichever servers you chose.
@@ -146,7 +147,7 @@ one of the `claude_desktop_config.json.bak.*` backups the installer left.
 | `403 ... quota project` / `API has not been used in project` | See [403 after DNS is fixed](#403-after-dns-is-fixed) below. |
 | gcloud fails to start | The installer pins a `uv`-managed Python 3.12 via `CLOUDSDK_PYTHON` when the system `python3` is too old; re-run it if you hit this outside the script. |
 | Ads was silently skipped | No developer token was given. Get one at the [API Center](https://ads.google.com/aw/apicenter) and re-run. |
-| GTM delete/publish refuses to run | Expected — add `GTM_MCP_ALLOW_DESTRUCTIVE=1` to the `tagmanager-mcp` env, or re-run and answer `y`. |
+| GTM delete/revert/resolve/publish refuses to run | Expected — add `GTM_MCP_ALLOW_DESTRUCTIVE=1` to the `tagmanager-mcp` env, or re-run and answer `y`. |
 
 **Note:** the Ads developer token is stored in plain text in the client config.
 
