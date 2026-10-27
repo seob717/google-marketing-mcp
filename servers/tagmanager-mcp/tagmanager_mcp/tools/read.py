@@ -35,10 +35,22 @@ async def _call(fn):
     return await asyncio.to_thread(lambda: fn().execute())
 
 
+async def _list_all(fn, key):
+    """Follows nextPageToken so large containers aren't silently truncated."""
+    items, token = [], None
+    while True:
+        res = await _call(lambda: fn(token))
+        items.extend(res.get(key, []))
+        token = res.get("nextPageToken")
+        if not token:
+            return items
+
+
 async def list_accounts() -> List[Dict[str, Any]]:
     """Lists the GTM accounts the authenticated user can access."""
-    res = await _call(lambda: tagmanager().accounts().list())
-    return res.get("account", [])
+    return await _list_all(
+        lambda t: tagmanager().accounts().list(pageToken=t), "account"
+    )
 
 
 async def list_containers(account_id: int | str) -> List[Dict[str, Any]]:
@@ -48,8 +60,9 @@ async def list_containers(account_id: int | str) -> List[Dict[str, Any]]:
         account_id: The numeric GTM account ID.
     """
     parent = account_path(account_id)
-    res = await _call(lambda: tagmanager().accounts().containers().list(parent=parent))
-    return res.get("container", [])
+    return await _list_all(
+        lambda t: tagmanager().accounts().containers().list(parent=parent, pageToken=t), "container"
+    )
 
 
 async def get_container(
@@ -75,10 +88,9 @@ async def list_workspaces(
         container_id: The numeric GTM container ID.
     """
     parent = container_path(account_id, container_id)
-    res = await _call(
-        lambda: tagmanager().accounts().containers().workspaces().list(parent=parent)
+    return await _list_all(
+        lambda t: tagmanager().accounts().containers().workspaces().list(parent=parent, pageToken=t), "workspace"
     )
-    return res.get("workspace", [])
 
 
 async def get_workspace(
@@ -144,8 +156,9 @@ async def list_tags(
         workspace_id: The numeric GTM workspace ID.
     """
     parent = workspace_path(account_id, container_id, workspace_id)
-    res = await _call(lambda: _workspaces(tagmanager()).tags().list(parent=parent))
-    return res.get("tag", [])
+    return await _list_all(
+        lambda t: _workspaces(tagmanager()).tags().list(parent=parent, pageToken=t), "tag"
+    )
 
 
 async def get_tag(
@@ -177,8 +190,9 @@ async def list_triggers(
         workspace_id: The numeric GTM workspace ID.
     """
     parent = workspace_path(account_id, container_id, workspace_id)
-    res = await _call(lambda: _workspaces(tagmanager()).triggers().list(parent=parent))
-    return res.get("trigger", [])
+    return await _list_all(
+        lambda t: _workspaces(tagmanager()).triggers().list(parent=parent, pageToken=t), "trigger"
+    )
 
 
 async def get_trigger(
@@ -210,8 +224,9 @@ async def list_variables(
         workspace_id: The numeric GTM workspace ID.
     """
     parent = workspace_path(account_id, container_id, workspace_id)
-    res = await _call(lambda: _workspaces(tagmanager()).variables().list(parent=parent))
-    return res.get("variable", [])
+    return await _list_all(
+        lambda t: _workspaces(tagmanager()).variables().list(parent=parent, pageToken=t), "variable"
+    )
 
 
 async def get_variable(
@@ -243,10 +258,9 @@ async def list_built_in_variables(
         workspace_id: The numeric GTM workspace ID.
     """
     parent = workspace_path(account_id, container_id, workspace_id)
-    res = await _call(
-        lambda: _workspaces(tagmanager()).built_in_variables().list(parent=parent)
+    return await _list_all(
+        lambda t: _workspaces(tagmanager()).built_in_variables().list(parent=parent, pageToken=t), "builtInVariable"
     )
-    return res.get("builtInVariable", [])
 
 
 async def list_versions(
@@ -259,10 +273,9 @@ async def list_versions(
         container_id: The numeric GTM container ID.
     """
     parent = container_path(account_id, container_id)
-    res = await _call(
-        lambda: tagmanager().accounts().containers().version_headers().list(parent=parent)
+    return await _list_all(
+        lambda t: tagmanager().accounts().containers().version_headers().list(parent=parent, pageToken=t), "containerVersionHeader"
     )
-    return res.get("containerVersionHeader", [])
 
 
 async def get_version(
@@ -292,3 +305,84 @@ async def get_live_version(
     return await _call(
         lambda: tagmanager().accounts().containers().versions().live(parent=parent)
     )
+
+
+# Fields that differ between containers/versions even when the config matches.
+_VOLATILE = {
+    "accountId", "containerId", "containerVersionId", "workspaceId", "path",
+    "fingerprint", "tagManagerUrl", "tagId", "triggerId", "variableId",
+    "parentFolderId",
+}
+_TRIGGER_REFS = ("firingTriggerId", "blockingTriggerId")
+
+
+def _normalize(entity: Dict[str, Any], trigger_names: Dict[str, str]) -> Dict[str, Any]:
+    out = {k: v for k, v in entity.items() if k not in _VOLATILE}
+    # Trigger IDs are per-container; compare by trigger name instead.
+    for ref in _TRIGGER_REFS:
+        if ref in out:
+            out[ref] = sorted(trigger_names.get(i, i) for i in out[ref])
+    if "parameter" in out:
+        out["parameter"] = sorted(out["parameter"], key=lambda p: p.get("key", ""))
+    return out
+
+
+def diff_versions(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """Diffs two container versions by entity name."""
+    result: Dict[str, Any] = {}
+    names = [
+        {t["triggerId"]: t["name"] for t in v.get("trigger", [])} for v in (a, b)
+    ]
+    for kind in ("tag", "trigger", "variable"):
+        ea, eb = (
+            {e["name"]: _normalize(e, n) for e in v.get(kind, [])}
+            for v, n in zip((a, b), names)
+        )
+        changed = {}
+        for name in ea.keys() & eb.keys():
+            fields = {
+                f: {"a": ea[name].get(f), "b": eb[name].get(f)}
+                for f in ea[name].keys() | eb[name].keys()
+                if ea[name].get(f) != eb[name].get(f)
+            }
+            if fields:
+                changed[name] = fields
+        result[kind] = {
+            "only_in_a": sorted(ea.keys() - eb.keys()),
+            "only_in_b": sorted(eb.keys() - ea.keys()),
+            "changed": changed,
+        }
+    bia, bib = ({x["type"] for x in v.get("builtInVariable", [])} for v in (a, b))
+    result["builtInVariable"] = {
+        "only_in_a": sorted(bia - bib),
+        "only_in_b": sorted(bib - bia),
+    }
+    return result
+
+
+async def compare_live_versions(
+    account_id_a: int | str,
+    container_id_a: int | str,
+    account_id_b: int | str,
+    container_id_b: int | str,
+) -> Dict[str, Any]:
+    """Compares the live versions of two containers (e.g. dev vs prod) and
+    returns only the differences: tags/triggers/variables present on one side
+    only, and per-field changes for same-named ones. Trigger references are
+    compared by trigger name, since IDs differ between containers.
+
+    Args:
+        account_id_a: The numeric GTM account ID of container A.
+        container_id_a: The numeric GTM container ID of container A.
+        account_id_b: The numeric GTM account ID of container B.
+        container_id_b: The numeric GTM container ID of container B.
+    """
+    a, b = await asyncio.gather(
+        get_live_version(account_id_a, container_id_a),
+        get_live_version(account_id_b, container_id_b),
+    )
+    return {
+        "a": {"container": a.get("container", {}).get("name"), "version": a.get("containerVersionId")},
+        "b": {"container": b.get("container", {}).get("name"), "version": b.get("containerVersionId")},
+        "diff": diff_versions(a, b),
+    }

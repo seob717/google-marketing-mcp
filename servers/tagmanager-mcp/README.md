@@ -18,7 +18,11 @@ them with `list_accounts` → `list_containers` → `list_workspaces`.
 **Read:** `list_accounts`, `list_containers`, `get_container`, `list_workspaces`,
 `get_workspace`, `get_workspace_status`, `quick_preview`, `list_tags`, `get_tag`, `list_triggers`, `get_trigger`,
 `list_variables`, `get_variable`, `list_built_in_variables`, `list_versions`,
-`get_version`, `get_live_version`
+`get_version`, `get_live_version`, `compare_live_versions` (dev vs prod diff)
+
+`update_tag` / `update_trigger` / `update_variable` merge by default: only the
+fields you pass change, and `parameter` entries merge by `key`. Pass
+`replace=true` to write the full resource (e.g. to remove a parameter).
 
 **Write** (workspace-scoped; nothing goes live until you create + publish a
 version): `create_tag`, `update_tag`, `delete_tag`, `create_trigger`,

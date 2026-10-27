@@ -44,6 +44,7 @@ _FUNCTIONS = [
     read.list_versions,
     read.get_version,
     read.get_live_version,
+    read.compare_live_versions,
     write.create_tag,
     write.update_tag,
     write.delete_tag,

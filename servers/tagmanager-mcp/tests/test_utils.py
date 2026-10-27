@@ -91,3 +91,61 @@ def test_revert_change_rejects_unknown_entity_type(monkeypatch):
     monkeypatch.setenv("GTM_MCP_ALLOW_DESTRUCTIVE", "1")
     with pytest.raises(ValueError):
         asyncio.run(write.revert_change(6, 42, 3, "folders", 7))
+
+
+def test_merge_entity_keeps_untouched_parameters():
+    from tagmanager_mcp.tools.write import merge_entity
+
+    current = {
+        "name": "GA4 credit_topup",
+        "fingerprint": "1",
+        "parameter": [
+            {"key": "eventName", "type": "template", "value": "credit_topup"},
+            {"key": "measurementId", "type": "template", "value": "G-X"},
+        ],
+    }
+    patch = {"parameter": [{"key": "eventName", "type": "template", "value": "x"}]}
+    merged = merge_entity(current, patch)
+    assert merged["name"] == "GA4 credit_topup"
+    assert {p["key"]: p["value"] for p in merged["parameter"]} == {
+        "eventName": "x",
+        "measurementId": "G-X",
+    }
+
+
+def test_diff_versions_matches_by_name_and_trigger_name():
+    from tagmanager_mcp.tools.read import diff_versions
+
+    def version(trigger_id, extra_var):
+        return {
+            "trigger": [{"triggerId": trigger_id, "name": "purchase", "type": "customEvent"}],
+            "tag": [{"tagId": trigger_id, "name": "GA4 credit_topup", "firingTriggerId": [trigger_id]}],
+            "variable": [{"variableId": "1", "name": "method", "type": "v"}] + extra_var,
+            "builtInVariable": [{"type": "pageUrl"}],
+        }
+
+    dev = version("10", [{"variableId": "2", "name": "credit_type", "type": "v"}])
+    prod = version("99", [])
+    d = diff_versions(dev, prod)
+    # Different trigger IDs, same trigger name: not a change.
+    assert d["tag"] == {"only_in_a": [], "only_in_b": [], "changed": {}}
+    assert d["trigger"]["changed"] == {}
+    assert d["variable"]["only_in_a"] == ["credit_type"]
+    assert d["builtInVariable"] == {"only_in_a": [], "only_in_b": []}
+
+
+def test_list_all_follows_next_page_token():
+    import asyncio
+
+    from tagmanager_mcp.tools.read import _list_all
+
+    pages = {None: {"tag": [1, 2], "nextPageToken": "p2"}, "p2": {"tag": [3]}}
+
+    class Req:
+        def __init__(self, token):
+            self.token = token
+
+        def execute(self):
+            return pages[self.token]
+
+    assert asyncio.run(_list_all(lambda t: Req(t), "tag")) == [1, 2, 3]

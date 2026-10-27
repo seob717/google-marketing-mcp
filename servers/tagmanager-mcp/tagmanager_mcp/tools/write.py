@@ -40,6 +40,30 @@ def _workspaces(svc):
     return svc.accounts().containers().workspaces()
 
 
+def merge_entity(current: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Overlays patch on current. Top-level fields are replaced; "parameter"
+    entries are merged by "key" so untouched parameters survive."""
+    merged = {**current, **patch}
+    if "parameter" in patch and "parameter" in current:
+        by_key = {p["key"]: p for p in current["parameter"]}
+        by_key.update({p["key"]: p for p in patch["parameter"]})
+        merged["parameter"] = list(by_key.values())
+    return merged
+
+
+async def _update(collection: str, path: str, body: Dict[str, Any], replace: bool):
+    coll = lambda: getattr(_workspaces(tagmanager()), collection)()
+    current = await _run(lambda: coll().get(path=path))
+    if not replace:
+        body = merge_entity(current, body)
+    # The fingerprint makes the write fail if someone changed it since the read.
+    return await _run(
+        lambda: coll().update(
+            path=path, fingerprint=current.get("fingerprint"), body=body
+        )
+    )
+
+
 # --- tags ---------------------------------------------------------------------
 
 
@@ -69,18 +93,23 @@ async def update_tag(
     workspace_id: int | str,
     tag_id: int | str,
     tag: Dict[str, Any],
+    replace: bool = False,
 ) -> Dict[str, Any]:
-    """Updates (replaces) an existing tag.
+    """Updates an existing tag. By default only the given fields change;
+    "parameter" entries are merged by key (a list-type parameter such as
+    eventSettingsTable is still replaced whole, so pass its full value).
 
     Args:
         account_id: The numeric GTM account ID.
         container_id: The numeric GTM container ID.
         workspace_id: The numeric GTM workspace ID.
         tag_id: The numeric tag ID.
-        tag: The full GTM Tag resource body to write.
+        tag: The Tag fields to change, e.g. {"parameter": [...]}.
+        replace: True writes tag as the full resource instead of merging,
+          which is how to remove a field or parameter.
     """
     path = entity_path(account_id, container_id, workspace_id, "tags", tag_id)
-    return await _run(lambda: _workspaces(tagmanager()).tags().update(path=path, body=tag))
+    return await _update("tags", path, tag, replace)
 
 
 async def delete_tag(
@@ -133,20 +162,23 @@ async def update_trigger(
     workspace_id: int | str,
     trigger_id: int | str,
     trigger: Dict[str, Any],
+    replace: bool = False,
 ) -> Dict[str, Any]:
-    """Updates (replaces) an existing trigger.
+    """Updates an existing trigger. By default only the given fields change;
+    "parameter" entries are merged by key (a list-type parameter such as
+    eventSettingsTable is still replaced whole, so pass its full value).
 
     Args:
         account_id: The numeric GTM account ID.
         container_id: The numeric GTM container ID.
         workspace_id: The numeric GTM workspace ID.
         trigger_id: The numeric trigger ID.
-        trigger: The full GTM Trigger resource body to write.
+        trigger: The Trigger fields to change, e.g. {"parameter": [...]}.
+        replace: True writes trigger as the full resource instead of merging,
+          which is how to remove a field or parameter.
     """
     path = entity_path(account_id, container_id, workspace_id, "triggers", trigger_id)
-    return await _run(
-        lambda: _workspaces(tagmanager()).triggers().update(path=path, body=trigger)
-    )
+    return await _update("triggers", path, trigger, replace)
 
 
 async def delete_trigger(
@@ -199,20 +231,23 @@ async def update_variable(
     workspace_id: int | str,
     variable_id: int | str,
     variable: Dict[str, Any],
+    replace: bool = False,
 ) -> Dict[str, Any]:
-    """Updates (replaces) an existing variable.
+    """Updates an existing variable. By default only the given fields change;
+    "parameter" entries are merged by key (a list-type parameter such as
+    eventSettingsTable is still replaced whole, so pass its full value).
 
     Args:
         account_id: The numeric GTM account ID.
         container_id: The numeric GTM container ID.
         workspace_id: The numeric GTM workspace ID.
         variable_id: The numeric variable ID.
-        variable: The full GTM Variable resource body to write.
+        variable: The Variable fields to change, e.g. {"parameter": [...]}.
+        replace: True writes variable as the full resource instead of merging,
+          which is how to remove a field or parameter.
     """
     path = entity_path(account_id, container_id, workspace_id, "variables", variable_id)
-    return await _run(
-        lambda: _workspaces(tagmanager()).variables().update(path=path, body=variable)
-    )
+    return await _update("variables", path, variable, replace)
 
 
 async def delete_variable(
