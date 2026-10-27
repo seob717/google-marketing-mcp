@@ -16,19 +16,22 @@ All IDs are the **numeric** GTM IDs (not the public `GTM-XXXX` code). Discover
 them with `list_accounts` → `list_containers` → `list_workspaces`.
 
 **Read:** `list_accounts`, `list_containers`, `get_container`, `list_workspaces`,
-`get_workspace`, `list_tags`, `get_tag`, `list_triggers`, `get_trigger`,
+`get_workspace`, `get_workspace_status`, `quick_preview`, `list_tags`, `get_tag`, `list_triggers`, `get_trigger`,
 `list_variables`, `get_variable`, `list_built_in_variables`, `list_versions`,
 `get_version`, `get_live_version`
 
 **Write** (workspace-scoped; nothing goes live until you create + publish a
 version): `create_tag`, `update_tag`, `delete_tag`, `create_trigger`,
 `update_trigger`, `delete_trigger`, `create_variable`, `update_variable`,
-`delete_variable`, `create_workspace`, `delete_workspace`, `create_version`,
+`delete_variable`, `create_workspace`, `delete_workspace`, `revert_change`,
+`enable_built_in_variables`, `disable_built_in_variables`, `sync_workspace`,
+`resolve_conflict`, `create_version`,
 `publish_version`
 
 ### Destructive-operation guard 🔒
 
-`delete_*` and `publish_version` refuse to run unless the server environment
+`delete_*`, `revert_change`, `disable_built_in_variables`, `resolve_conflict`
+and `publish_version` refuse to run unless the server environment
 sets `GTM_MCP_ALLOW_DESTRUCTIVE=1`. Create/update are always allowed but only
 affect a workspace until published.
 

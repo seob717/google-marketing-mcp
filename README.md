@@ -79,7 +79,7 @@ bash /tmp/gmm-setup.sh
 | `GA_MCP_PROJECT` | Google Cloud project ID. Skips the project prompt. |
 | `GA_MCP_ADS_DEV_TOKEN` | Google Ads developer token ([API Center](https://ads.google.com/aw/apicenter)). |
 | `GA_MCP_ADS_LOGIN_CUSTOMER_ID` | MCC (manager) customer ID; dashes are stripped. |
-| `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*`, `delete_workspace` and `publish_version`. |
+| `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*`, `delete_workspace`, `revert_change`, `disable_built_in_variables`, `resolve_conflict` and `publish_version`. |
 | `GA_MCP_ALLOW_WRITE` | `1` starts `analytics-mcp` with `--allow-write` (enables `create_property_annotation`). Default: off. |
 | `GA_MCP_GRPC_PROXY` | e.g. `http://proxy:3128`. Written as `grpc_proxy` into the gRPC-based servers' env (GA, GA Admin, Ads) for hosts that only reach Google through an HTTPS egress proxy. |
 | `GA4_ADMIN_MCP_TRANSPORT` | `rest` makes `ga4-admin-mcp` call Google over HTTPS instead of gRPC (see [Troubleshooting](#troubleshooting)). Default: gRPC. |

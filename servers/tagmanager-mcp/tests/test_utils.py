@@ -67,3 +67,27 @@ def test_delete_workspace_is_gated(monkeypatch):
     monkeypatch.delenv("GTM_MCP_ALLOW_DESTRUCTIVE", raising=False)
     with pytest.raises(PermissionError):
         asyncio.run(write.delete_workspace(6, 42, 3))
+
+
+def test_resolve_conflict_is_gated(monkeypatch):
+    import asyncio
+
+    from tagmanager_mcp.tools import write
+
+    monkeypatch.delenv("GTM_MCP_ALLOW_DESTRUCTIVE", raising=False)
+    with pytest.raises(PermissionError):
+        asyncio.run(write.resolve_conflict(6, 42, 3, {"variable": {}}))
+    with pytest.raises(PermissionError):
+        asyncio.run(write.revert_change(6, 42, 3, "variables", 7))
+    with pytest.raises(PermissionError):
+        asyncio.run(write.disable_built_in_variables(6, 42, 3, ["pageUrl"]))
+
+
+def test_revert_change_rejects_unknown_entity_type(monkeypatch):
+    import asyncio
+
+    from tagmanager_mcp.tools import write
+
+    monkeypatch.setenv("GTM_MCP_ALLOW_DESTRUCTIVE", "1")
+    with pytest.raises(ValueError):
+        asyncio.run(write.revert_change(6, 42, 3, "folders", 7))

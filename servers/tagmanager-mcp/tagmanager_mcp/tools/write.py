@@ -20,7 +20,7 @@ and require GTM_MCP_ALLOW_DESTRUCTIVE=1 in the server environment.
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from tagmanager_mcp.tools.client import tagmanager
 from tagmanager_mcp.tools.utils import (
@@ -278,6 +278,137 @@ async def delete_workspace(
     path = workspace_path(account_id, container_id, workspace_id)
     await _run(lambda: _workspaces(tagmanager()).delete(path=path))
     return {"deleted": path}
+
+
+async def revert_change(
+    account_id: int | str,
+    container_id: int | str,
+    workspace_id: int | str,
+    entity_type: str,
+    entity_id: int | str,
+    fingerprint: str | None = None,
+) -> Dict[str, Any]:
+    """Reverts a workspace change to a tag, trigger or variable back to its
+    state in the workspace's base version (a new entity is removed).
+    Destructive: requires GTM_MCP_ALLOW_DESTRUCTIVE=1.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+        entity_type: One of "tags", "triggers", "variables".
+        entity_id: The numeric ID of the entity.
+        fingerprint: Optional fingerprint, to fail if the entity changed since
+          it was read.
+    """
+    if entity_type not in ("tags", "triggers", "variables"):
+        raise ValueError('entity_type must be "tags", "triggers" or "variables".')
+    ensure_destructive_allowed("revert_change")
+    path = entity_path(account_id, container_id, workspace_id, entity_type, entity_id)
+    kwargs: Dict[str, Any] = {"path": path}
+    if fingerprint is not None:
+        kwargs["fingerprint"] = fingerprint
+    return await _run(
+        lambda: getattr(_workspaces(tagmanager()), entity_type)().revert(**kwargs)
+    )
+
+
+async def enable_built_in_variables(
+    account_id: int | str,
+    container_id: int | str,
+    workspace_id: int | str,
+    types: List[str],
+) -> Dict[str, Any]:
+    """Enables built-in variables in a workspace.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+        types: Built-in variable types, e.g. ["pageUrl", "clickText"].
+          See https://developers.google.com/tag-platform/tag-manager/api/v2/reference/accounts/containers/workspaces/built_in_variables/create.
+    """
+    parent = workspace_path(account_id, container_id, workspace_id)
+    return await _run(
+        lambda: _workspaces(tagmanager())
+        .built_in_variables()
+        .create(parent=parent, type=types)
+    )
+
+
+async def disable_built_in_variables(
+    account_id: int | str,
+    container_id: int | str,
+    workspace_id: int | str,
+    types: List[str],
+) -> Dict[str, Any]:
+    """Disables built-in variables in a workspace. Destructive: tags or
+    triggers that reference them break; requires GTM_MCP_ALLOW_DESTRUCTIVE=1.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+        types: Built-in variable types, e.g. ["pageUrl"].
+    """
+    ensure_destructive_allowed("disable_built_in_variables")
+    path = f"{workspace_path(account_id, container_id, workspace_id)}/built_in_variables"
+    await _run(
+        lambda: _workspaces(tagmanager())
+        .built_in_variables()
+        .delete(path=path, type=types)
+    )
+    return {"disabled": types}
+
+
+async def sync_workspace(
+    account_id: int | str,
+    container_id: int | str,
+    workspace_id: int | str,
+) -> Dict[str, Any]:
+    """Syncs a workspace to the latest container version.
+
+    Non-conflicting changes are merged; conflicting ones are kept and returned
+    under "mergeConflict" for resolve_conflict.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+    """
+    path = workspace_path(account_id, container_id, workspace_id)
+    return await _run(lambda: _workspaces(tagmanager()).sync(path=path))
+
+
+async def resolve_conflict(
+    account_id: int | str,
+    container_id: int | str,
+    workspace_id: int | str,
+    entity: Dict[str, Any],
+    fingerprint: str | None = None,
+) -> Dict[str, Any]:
+    """Resolves a merge conflict by replacing the workspace's version of an
+    entity with the given one. Destructive: the overwritten workspace change
+    is lost; requires GTM_MCP_ALLOW_DESTRUCTIVE=1.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+        entity: The resolved GTM Entity, e.g. {"variable": {...}} taken from
+          the "entityInBaseVersion" or "entityInWorkspace" side of a
+          get_workspace_status / sync_workspace merge conflict.
+          See https://developers.google.com/tag-platform/tag-manager/api/v2/reference/accounts/containers/workspaces/resolve_conflict.
+        fingerprint: Optional fingerprint of the entity in the workspace, to
+          fail if it changed since it was read.
+    """
+    ensure_destructive_allowed("resolve_conflict")
+    path = workspace_path(account_id, container_id, workspace_id)
+    kwargs: Dict[str, Any] = {"path": path, "body": entity}
+    if fingerprint is not None:
+        kwargs["fingerprint"] = fingerprint
+    await _run(lambda: _workspaces(tagmanager()).resolve_conflict(**kwargs))
+    return {"resolved": path}
 
 
 async def create_version(

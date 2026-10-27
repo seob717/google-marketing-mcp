@@ -97,6 +97,38 @@ async def get_workspace(
     )
 
 
+async def get_workspace_status(
+    account_id: int | str, container_id: int | str, workspace_id: int | str
+) -> Dict[str, Any]:
+    """Returns a workspace's pending changes and merge conflicts.
+
+    Check this before create_version: a workspace whose base version is behind
+    the latest version can conflict with it and fail to version/publish.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+    """
+    path = workspace_path(account_id, container_id, workspace_id)
+    return await _call(lambda: _workspaces(tagmanager()).getStatus(path=path))
+
+
+async def quick_preview(
+    account_id: int | str, container_id: int | str, workspace_id: int | str
+) -> Dict[str, Any]:
+    """Compiles the workspace without creating a version, to catch compiler
+    errors before create_version. Changes nothing.
+
+    Args:
+        account_id: The numeric GTM account ID.
+        container_id: The numeric GTM container ID.
+        workspace_id: The numeric GTM workspace ID.
+    """
+    path = workspace_path(account_id, container_id, workspace_id)
+    return await _call(lambda: _workspaces(tagmanager()).quick_preview(path=path))
+
+
 def _workspaces(svc):
     return svc.accounts().containers().workspaces()
 
