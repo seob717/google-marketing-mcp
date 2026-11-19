@@ -25,7 +25,8 @@ stay gated behind an opt-in env var in both writable servers:
 
 ## Requirements
 
-- **macOS** — the installer is macOS-only and exits on other platforms.
+- **macOS** (`setup.sh`) or **Windows 10/11** (`setup.ps1`, same flow and env
+  variables; no git or admin rights needed).
 - **Claude Desktop** and/or the **Claude Code CLI** (`claude`). The installer
   skips the CLI target automatically when the binary isn't on your `PATH`.
 - A **Google account with access to the properties you want to read**, and a
@@ -39,7 +40,21 @@ stay gated behind an opt-in env var in both writable servers:
 curl -fsSL https://raw.githubusercontent.com/seob717/google-marketing-mcp/main/setup.sh -o /tmp/gmm-setup.sh && bash /tmp/gmm-setup.sh
 ```
 
-The script:
+## Quick start (Windows)
+
+Run in `cmd` or PowerShell:
+
+```shell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/seob717/google-marketing-mcp/main/setup.ps1 -OutFile $env:TEMP\gmm-setup.ps1; & $env:TEMP\gmm-setup.ps1"
+```
+
+Differences from macOS: the Claude Desktop config is
+`%APPDATA%\Claude\claude_desktop_config.json` (plus the Microsoft Store copy under
+`%LOCALAPPDATA%\Packages\Claude_*` when present), ADC lives in
+`%APPDATA%\gcloud\`, the install log is `%TEMP%\ga-mcp-install.log`, and the two
+servers from this repo install from the GitHub zip archive instead of `git+https`.
+
+Both scripts:
 
 1. Asks which **clients** to set up — one `y/N` line each for **Claude Desktop**
    and **Claude Code CLI** (or pin with `GA_MCP_TARGETS=desktop,cli`).
