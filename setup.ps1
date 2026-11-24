@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Windows version of setup.sh — same flow, same questions, same env overrides.
+# Windows version of setup.sh — same flow, same question, same env overrides.
 # Runs on Windows PowerShell 5.1 (built in) and PowerShell 7. No git, no admin.
 #
 # Usage (cmd or PowerShell):
@@ -71,13 +71,10 @@ if ($env:GA_MCP_TARGETS) {
   if (HasItem $env:GA_MCP_TARGETS 'desktop') { $TARGET_DESKTOP = 1 }
   if (HasItem $env:GA_MCP_TARGETS 'cli') { $TARGET_CLI = 1 }
 } else {
-  Step '설치할 대상'
-  $TARGET_DESKTOP = AskYN 'Claude Desktop에 설치할까요?' 'y'
-  if ($CLAUDE_BIN) {
-    $TARGET_CLI = AskYN 'Claude Code CLI에 설치할까요?' 'y'
-  } else {
-    Warn "'claude' CLI가 없어 Claude Code CLI는 건너뜁니다 (https://claude.ai/download)."
-  }
+  # 묻지 않고 설치된 쪽에 모두 연결한다. 둘 다 없으면 Desktop 설정만 미리 써 둔다.
+  if ((Test-Path (Join-Path $env:LOCALAPPDATA 'AnthropicClaude')) -or (Test-Path (Join-Path $env:LOCALAPPDATA 'Packages\Claude_*')) -or (Test-Path $CONFIG)) { $TARGET_DESKTOP = 1 }
+  if ($CLAUDE_BIN) { $TARGET_CLI = 1 }
+  if (-not $TARGET_DESKTOP -and -not $TARGET_CLI) { $TARGET_DESKTOP = 1 }
 }
 if ($TARGET_CLI -and -not $CLAUDE_BIN) {
   Warn "'claude' CLI를 찾을 수 없어 Claude Code CLI 설정을 건너뜁니다."
@@ -93,11 +90,13 @@ if ($env:GA_MCP_SERVERS) {
   if (HasItem $env:GA_MCP_SERVERS 'ads') { $WITH_ADS = 1 }
   if (HasItem $env:GA_MCP_SERVERS 'gtm') { $WITH_GTM = 1 }
 } else {
-  Step '설치할 MCP 서버 (필요 없는 건 n)'
-  $WITH_GA       = AskYN 'Google Analytics (리포팅)?' 'y'
-  $WITH_GA_ADMIN = AskYN 'Google Analytics Admin (데이터 스트림·변경기록)?' 'y'
-  $WITH_ADS      = AskYN 'Google Ads (개발자 토큰 필요)?' 'y'
-  $WITH_GTM      = AskYN 'Google Tag Manager?' 'y'
+  # 질문은 하나만: GA 리포팅은 항상, 개발자 도구(GA Admin·GTM)는 선택. Ads는 env로만 켠다.
+  $WITH_GA = 1
+  Step '설치할 도구'
+  Write-Host 'Google Analytics 리포팅은 기본으로 설치합니다.'
+  $WITH_DEV = AskYN '개발자용 도구(GA 설정 관리·Google Tag Manager)도 설치할까요?' 'n'
+  $WITH_GA_ADMIN = $WITH_DEV; $WITH_GTM = $WITH_DEV
+  if ($env:GA_MCP_WITH_ADS -eq '1') { $WITH_ADS = 1 }
 }
 if (-not ($WITH_GA -or $WITH_GA_ADMIN -or $WITH_ADS -or $WITH_GTM)) { Fail '설치할 서버가 선택되지 않았습니다.' }
 
@@ -120,19 +119,10 @@ if ($WITH_ADS -and -not $ADS_LOGIN_CUSTOMER_ID) {
 }
 if ($ADS_LOGIN_CUSTOMER_ID) { $ADS_LOGIN_CUSTOMER_ID = $ADS_LOGIN_CUSTOMER_ID -replace '-', '' }
 
-# --- write / destructive gates -------------------------------------------------
+# --- write / destructive gates (env only; default off) -------------------------
 $GA_ADMIN_ALLOW_DESTRUCTIVE = $env:GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE
-if ($WITH_GA_ADMIN -and -not $GA_ADMIN_ALLOW_DESTRUCTIVE) {
-  if (AskYN 'GA4 설정의 보관·삭제 같은 위험한 쓰기도 허용할까요? (기본: 비허용)' 'n') { $GA_ADMIN_ALLOW_DESTRUCTIVE = '1' }
-}
 $GTM_ALLOW_DESTRUCTIVE = $env:GTM_MCP_ALLOW_DESTRUCTIVE
-if ($WITH_GTM -and -not $GTM_ALLOW_DESTRUCTIVE) {
-  if (AskYN '삭제·publish 같은 위험한 쓰기도 허용할까요? (기본: 비허용)' 'n') { $GTM_ALLOW_DESTRUCTIVE = '1' }
-}
 $GA_ALLOW_WRITE = $env:GA_MCP_ALLOW_WRITE
-if ($WITH_GA -and -not $GA_ALLOW_WRITE) {
-  if (AskYN 'GA 주석 만들기 같은 쓰기 도구도 켤까요? (기본: 끔)' 'n') { $GA_ALLOW_WRITE = '1' }
-}
 if (-not ($WITH_GA -or $WITH_GA_ADMIN -or $WITH_ADS -or $WITH_GTM)) { Fail '설치할 서버가 없습니다.' }
 
 # --- 1. uv ---------------------------------------------------------------------
@@ -204,14 +194,23 @@ if ($WITH_GTM)      { $GTM_MCP_BIN = Install-Server 'Tag Manager' $GTM_INSTALL_S
 Step '4/6 · Google 로그인 & 프로젝트'
 # gcloud is a .cmd on Windows: keep --format values with parens inside "..." so cmd.exe leaves them alone.
 function Active-Account { & $GCLOUD auth list --filter=status:ACTIVE '--format="value(account)"' 2>$null | Select-Object -First 1 }
-if (-not (Active-Account)) {
-  Info '브라우저에서 Google 계정으로 로그인하세요 (GA 속성에 접근 권한이 있는 계정).'
-  & $GCLOUD auth login
-}
-$ACTIVE_ACCOUNT = Active-Account
-Ok "로그인됨: $(if ($ACTIVE_ACCOUNT) { $ACTIVE_ACCOUNT } else { '알 수 없음' })"
-
 $PROJECT = $env:GA_MCP_PROJECT
+# 프로젝트가 정해져 있으면 gcloud 계정 로그인 없이 앱용 로그인(6단계) 한 번으로 끝낸다.
+# 이때 API는 프로젝트 관리자가 켜 두었다고 보고 확인을 건너뛴다.
+$SKIP_ACCOUNT_LOGIN = $false
+if (-not (Active-Account)) {
+  if ($PROJECT) {
+    $SKIP_ACCOUNT_LOGIN = $true
+  } else {
+    Info '브라우저에서 Google 계정으로 로그인하세요 (GA 속성에 접근 권한이 있는 계정).'
+    & $GCLOUD auth login
+  }
+}
+if (-not $SKIP_ACCOUNT_LOGIN) {
+  $ACTIVE_ACCOUNT = Active-Account
+  Ok "로그인됨: $(if ($ACTIVE_ACCOUNT) { $ACTIVE_ACCOUNT } else { '알 수 없음' })"
+}
+
 if (-not $PROJECT) {
   $PROJECT = & $GCLOUD config get-value project 2>$null | Select-Object -First 1
   if ($PROJECT -eq '(unset)') { $PROJECT = '' }
@@ -230,6 +229,7 @@ if (-not $PROJECT) {
 }
 & $GCLOUD config set project $PROJECT *> $null
 Ok "프로젝트: $PROJECT"
+if ($SKIP_ACCOUNT_LOGIN) { Info 'API 확인은 건너뜁니다 (프로젝트 관리자가 켜 둔 것으로 봅니다).' }
 
 # --- 5. enable APIs (skip when already active) -------------------------------
 Step '5/6 · 필요한 API 확인'
@@ -238,7 +238,8 @@ if ($WITH_GA -or $WITH_GA_ADMIN) { $REQUIRED_APIS += 'analyticsadmin.googleapis.
 if ($WITH_GA)  { $REQUIRED_APIS += 'analyticsdata.googleapis.com' }
 if ($WITH_ADS) { $REQUIRED_APIS += 'googleads.googleapis.com' }
 if ($WITH_GTM) { $REQUIRED_APIS += 'tagmanager.googleapis.com' }
-$ENABLED_APIS = @(& $GCLOUD services list --enabled --project $PROJECT '--format="value(config.name)"' 2>$null)
+if ($SKIP_ACCOUNT_LOGIN) { $REQUIRED_APIS = @() }
+$ENABLED_APIS = @(if ($REQUIRED_APIS.Count -gt 0) { & $GCLOUD services list --enabled --project $PROJECT '--format="value(config.name)"' 2>$null })
 $MISSING_APIS = @()
 foreach ($api in $REQUIRED_APIS) {
   if ($ENABLED_APIS -contains $api) { Ok "$api (활성화됨)" } else { $MISSING_APIS += $api }
@@ -257,7 +258,7 @@ if ($MISSING_APIS.Count -gt 0) {
 
 # --- 6. application default credentials + wire into the selected clients ------
 Step '6/6 · 인증 & MCP 연결'
-Info '앱용 인증(ADC) 설정 — 브라우저에서 한 번 더 로그인하세요.'
+Info '브라우저에서 Google 계정으로 로그인하세요 (GA 권한을 받은 회사 계정).'
 $ADC_SCOPES = 'https://www.googleapis.com/auth/cloud-platform'
 if ($WITH_GA -or $WITH_GA_ADMIN) { $ADC_SCOPES = "$ANALYTICS_READONLY_SCOPE,$ADC_SCOPES" }
 if ($WITH_GA_ADMIN) { $ADC_SCOPES = "$ANALYTICS_EDIT_SCOPE,$ADC_SCOPES" }
