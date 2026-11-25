@@ -56,20 +56,22 @@ servers from this repo install from the GitHub zip archive instead of `git+https
 
 Both scripts:
 
-1. Asks which **clients** to set up — one `y/N` line each for **Claude Desktop**
-   and **Claude Code CLI** (or pin with `GA_MCP_TARGETS=desktop,cli`).
-2. Asks which **servers** to install — one `y/N` line each for **Google
-   Analytics** / **Google Analytics Admin** / **Google Ads** / **Google Tag
-   Manager** (all default to yes; answer `n` to skip any). Pin the whole set
-   with `GA_MCP_SERVERS=ga,ga-admin,ads,gtm`.
-3. For **Ads**, asks for a developer token (and an MCC customer ID if you go
-   through a manager account). No token → Ads is skipped.
-4. For **GTM**, asks whether to allow destructive writes (delete / revert /
-   resolve conflict / publish).
-   Default is no.
+1. Detects the **clients** — Claude Desktop if it is installed, Claude Code CLI
+   if `claude` is on PATH (Desktop config is written when neither is found).
+   Pin with `GA_MCP_TARGETS=desktop,cli`.
+2. Asks **one** question: install the developer tools too (**Google Analytics
+   Admin** + **Google Tag Manager**)? Default no. **Google Analytics** reporting
+   is always installed. Pin the whole set with `GA_MCP_SERVERS=ga,ga-admin,ads,gtm`.
+3. **Ads** is only set up via `GA_MCP_WITH_ADS=1` or `GA_MCP_SERVERS`; it then
+   asks for a developer token (and an MCC customer ID). No token → Ads is skipped.
+4. Write/destructive tools stay off unless their env flag is set
+   (`GA_MCP_ALLOW_WRITE`, `GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE`, `GTM_MCP_ALLOW_DESTRUCTIVE`).
 5. Installs the servers via `uv`, installs the Google Cloud SDK if missing.
-6. Signs you in once (ADC) with the union of scopes for whichever servers you chose.
-7. Enables the required APIs and registers the servers into your clients.
+6. Signs you in (ADC) with the union of scopes for whichever servers you chose.
+   With `GA_MCP_PROJECT` set and no gcloud account yet, this is the only browser
+   sign-in: the gcloud account login and the API check are skipped (the project
+   admin is expected to have enabled the APIs).
+7. Enables the required APIs (when checked) and registers the servers into your clients.
 
 Re-running the script is safe: it upgrades what's installed, backs up your
 Claude Desktop config before touching it, and re-registers CLI entries in place.
@@ -90,9 +92,10 @@ bash /tmp/gmm-setup.sh
 
 | Variable | Effect |
 |---|---|
-| `GA_MCP_TARGETS` | Comma list of `desktop`, `cli`. Skips the client prompt. |
-| `GA_MCP_SERVERS` | Comma list of `ga`, `ga-admin`, `ads`, `gtm`. Skips the server prompt. |
-| `GA_MCP_PROJECT` | Google Cloud project ID. Skips the project prompt. |
+| `GA_MCP_TARGETS` | Comma list of `desktop`, `cli`. Overrides client auto-detection. |
+| `GA_MCP_SERVERS` | Comma list of `ga`, `ga-admin`, `ads`, `gtm`. Skips the developer-tools question. |
+| `GA_MCP_WITH_ADS` | `1` also sets up Google Ads (asks for a developer token if none given). |
+| `GA_MCP_PROJECT` | Google Cloud project ID. Skips the project prompt and, without an active gcloud account, the extra account sign-in. |
 | `GA_MCP_ADS_DEV_TOKEN` | Google Ads developer token ([API Center](https://ads.google.com/aw/apicenter)). |
 | `GA_MCP_ADS_LOGIN_CUSTOMER_ID` | MCC (manager) customer ID; dashes are stripped. |
 | `GTM_MCP_ALLOW_DESTRUCTIVE` | `1` enables GTM `delete_*`, `delete_workspace`, `revert_change`, `disable_built_in_variables`, `resolve_conflict` and `publish_version`. |

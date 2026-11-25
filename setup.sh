@@ -26,9 +26,9 @@
 #   bash setup.sh
 #   GA_MCP_PROJECT=my-gcp-project bash setup.sh   # skip the project prompt
 #   GA_MCP_SERVERS=ga,ga-admin,ads,gtm bash setup.sh
-#     # skip the server picker (values: ga, ga-admin, ads, gtm — any subset)
+#     # skip the developer-tools question (values: ga, ga-admin, ads, gtm — any subset)
 #   GA_MCP_TARGETS=desktop,cli bash setup.sh
-#     # skip the target picker (values: desktop, cli — comma-separated)
+#     # pin the clients instead of auto-detecting them (values: desktop, cli)
 #   GA_MCP_WITH_ADS=1 GA_MCP_ADS_DEV_TOKEN=xxx bash setup.sh
 #     # also set up Google Ads MCP without prompts
 #     # (optional: GA_MCP_ADS_LOGIN_CUSTOMER_ID for access via a manager/MCC account)
@@ -128,16 +128,11 @@ CLAUDE_BIN="$(command -v claude || true)"
 if [ -n "${GA_MCP_TARGETS:-}" ]; then
   case ",$GA_MCP_TARGETS," in *,desktop,*) TARGET_DESKTOP=1 ;; esac
   case ",$GA_MCP_TARGETS," in *,cli,*) TARGET_CLI=1 ;; esac
-elif [ -r /dev/tty ]; then
-  step "설치할 대상"
-  ask_yn TARGET_DESKTOP "Claude Desktop에 설치할까요?" y
-  if [ -n "$CLAUDE_BIN" ]; then
-    ask_yn TARGET_CLI "Claude Code CLI에 설치할까요?" y
-  else
-    warn "'claude' CLI가 없어 Claude Code CLI는 건너뜁니다 (https://claude.ai/download)."
-  fi
 else
-  TARGET_DESKTOP=1
+  # 묻지 않고 설치된 쪽에 모두 연결한다. 둘 다 없으면 Desktop 설정만 미리 써 둔다.
+  { [ -d /Applications/Claude.app ] || [ -d "$HOME/Applications/Claude.app" ] || [ -f "$CONFIG" ]; } && TARGET_DESKTOP=1
+  [ -n "$CLAUDE_BIN" ] && TARGET_CLI=1
+  [ "$TARGET_DESKTOP" = "0" ] && [ "$TARGET_CLI" = "0" ] && TARGET_DESKTOP=1
 fi
 
 # Claude Code CLI needs the `claude` binary. Skip that target if it's missing.
@@ -164,13 +159,13 @@ if [ -n "${GA_MCP_SERVERS:-}" ]; then
   case ",$GA_MCP_SERVERS," in *,ads,*) WITH_ADS=1 ;; esac
   case ",$GA_MCP_SERVERS," in *,gtm,*) WITH_GTM=1 ;; esac
 elif [ -r /dev/tty ]; then
-  # Asked one line at a time (y/N), all defaulting to yes. Ads asks for a
-  # developer token below and skips itself if none is given.
-  step "설치할 MCP 서버 (필요 없는 건 n)"
-  ask_yn WITH_GA       "Google Analytics (리포팅)?" y
-  ask_yn WITH_GA_ADMIN "Google Analytics Admin (데이터 스트림·변경기록)?" y
-  ask_yn WITH_ADS      "Google Ads (개발자 토큰 필요)?" y
-  ask_yn WITH_GTM      "Google Tag Manager?" y
+  # 질문은 하나만: GA 리포팅은 항상, 개발자 도구(GA Admin·GTM)는 선택. Ads는 env로만 켠다.
+  WITH_GA=1
+  step "설치할 도구"
+  echo "Google Analytics 리포팅은 기본으로 설치합니다."
+  ask_yn WITH_DEV "개발자용 도구(GA 설정 관리·Google Tag Manager)도 설치할까요?" n
+  WITH_GA_ADMIN="$WITH_DEV"; WITH_GTM="$WITH_DEV"
+  [ "${GA_MCP_WITH_ADS:-}" = "1" ] && WITH_ADS=1
 else
   # Non-interactive without GA_MCP_SERVERS: GA on, others by their env flag.
   WITH_GA=1
@@ -205,34 +200,16 @@ fi
 ADS_LOGIN_CUSTOMER_ID="${ADS_LOGIN_CUSTOMER_ID//-/}"
 
 # --- GA4 Admin: destructive gate ----------------------------------------------
-# GA Admin supports read + write. Archive/delete stay disabled unless opted in.
+# GA Admin supports read + write. Archive/delete stay disabled unless the env opts in.
 GA_ADMIN_ALLOW_DESTRUCTIVE="${GA4_ADMIN_MCP_ALLOW_DESTRUCTIVE:-}"
-if [ "$WITH_GA_ADMIN" = "1" ] && [ -z "$GA_ADMIN_ALLOW_DESTRUCTIVE" ]; then
-  ask GA_ADMIN_DESTRUCTIVE_REPLY "GA4 설정의 보관·삭제 같은 위험한 쓰기도 허용할까요? (기본: 비허용) [y/N]: "
-  case "$GA_ADMIN_DESTRUCTIVE_REPLY" in
-    [yY]*) GA_ADMIN_ALLOW_DESTRUCTIVE=1 ;;
-  esac
-fi
 
 # --- Google Tag Manager: destructive gate -------------------------------------
-# GTM supports read + write. Delete/publish stay disabled unless opted in.
+# GTM supports read + write. Delete/publish stay disabled unless the env opts in.
 GTM_ALLOW_DESTRUCTIVE="${GTM_MCP_ALLOW_DESTRUCTIVE:-}"
-if [ "$WITH_GTM" = "1" ] && [ -z "$GTM_ALLOW_DESTRUCTIVE" ]; then
-  ask GTM_DESTRUCTIVE_REPLY "삭제·publish 같은 위험한 쓰기도 허용할까요? (기본: 비허용) [y/N]: "
-  case "$GTM_DESTRUCTIVE_REPLY" in
-    [yY]*) GTM_ALLOW_DESTRUCTIVE=1 ;;
-  esac
-fi
 
 # --- Google Analytics: write gate ---------------------------------------------
 # analytics-mcp only registers its write tools when started with --allow-write.
 GA_ALLOW_WRITE="${GA_MCP_ALLOW_WRITE:-}"
-if [ "$WITH_GA" = "1" ] && [ -z "$GA_ALLOW_WRITE" ]; then
-  ask GA_WRITE_REPLY "GA 주석 만들기 같은 쓰기 도구도 켤까요? (기본: 끔) [y/N]: "
-  case "$GA_WRITE_REPLY" in
-    [yY]*) GA_ALLOW_WRITE=1 ;;
-  esac
-fi
 
 # All servers may have been skipped (e.g. Ads-only with no token).
 if [ "$WITH_GA" = "0" ] && [ "$WITH_GA_ADMIN" = "0" ] && [ "$WITH_ADS" = "0" ] && [ "$WITH_GTM" = "0" ]; then
@@ -364,14 +341,23 @@ fi
 
 # --- 4. Google sign-in & project ---------------------------------------------
 step "4/6 · Google 로그인 & 프로젝트"
-if ! "$GCLOUD" auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
-  info "브라우저에서 Google 계정으로 로그인하세요 (GA 속성에 접근 권한이 있는 계정)."
-  "$GCLOUD" auth login
-fi
-ACTIVE_ACCOUNT="$("$GCLOUD" auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | head -1)"
-ok "로그인됨: ${ACTIVE_ACCOUNT:-알 수 없음}"
-
 PROJECT="${GA_MCP_PROJECT:-}"
+# 프로젝트가 정해져 있으면 gcloud 계정 로그인 없이 앱용 로그인(6단계) 한 번으로 끝낸다.
+# 이때 API는 프로젝트 관리자가 켜 두었다고 보고 확인을 건너뛴다.
+SKIP_ACCOUNT_LOGIN=0
+if ! "$GCLOUD" auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
+  if [ -n "$PROJECT" ]; then
+    SKIP_ACCOUNT_LOGIN=1
+  else
+    info "브라우저에서 Google 계정으로 로그인하세요 (GA 속성에 접근 권한이 있는 계정)."
+    "$GCLOUD" auth login
+  fi
+fi
+if [ "$SKIP_ACCOUNT_LOGIN" = "0" ]; then
+  ACTIVE_ACCOUNT="$("$GCLOUD" auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | head -1)"
+  ok "로그인됨: ${ACTIVE_ACCOUNT:-알 수 없음}"
+fi
+
 if [ -z "$PROJECT" ]; then
   PROJECT="$("$GCLOUD" config get-value project 2>/dev/null || true)"
   [ "$PROJECT" = "(unset)" ] && PROJECT=""
@@ -390,6 +376,7 @@ if [ -z "$PROJECT" ]; then
 fi
 "$GCLOUD" config set project "$PROJECT" 1>/dev/null 2>&1 || true
 ok "프로젝트: $PROJECT"
+[ "$SKIP_ACCOUNT_LOGIN" = "1" ] && info "API 확인은 건너뜁니다 (프로젝트 관리자가 켜 둔 것으로 봅니다)."
 
 # --- 5. enable APIs (skip when already active) -------------------------------
 # Only the project owner/editor can enable APIs. For a shared project, an admin
@@ -402,7 +389,8 @@ REQUIRED_APIS=""
 [ "$WITH_GA" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS analyticsdata.googleapis.com"
 [ "$WITH_ADS" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS googleads.googleapis.com"
 [ "$WITH_GTM" = "1" ] && REQUIRED_APIS="$REQUIRED_APIS tagmanager.googleapis.com"
-ENABLED_APIS="$("$GCLOUD" services list --enabled --project "$PROJECT" \
+[ "$SKIP_ACCOUNT_LOGIN" = "1" ] && REQUIRED_APIS=""
+ENABLED_APIS="$([ -n "$REQUIRED_APIS" ] && "$GCLOUD" services list --enabled --project "$PROJECT" \
   --format="value(config.name)" 2>/dev/null || true)"
 MISSING_APIS=""
 for api in $REQUIRED_APIS; do
@@ -426,7 +414,7 @@ fi
 
 # --- 6. application default credentials + wire into the selected clients ------
 step "6/6 · 인증 & MCP 연결"
-info "앱용 인증(ADC) 설정 — 브라우저에서 한 번 더 로그인하세요."
+info "브라우저에서 Google 계정으로 로그인하세요 (GA 권한을 받은 회사 계정)."
 # ADC login overwrites the credentials file, so both servers share one ADC —
 # request the union of scopes in a single login.
 ADC_SCOPES="https://www.googleapis.com/auth/cloud-platform"
